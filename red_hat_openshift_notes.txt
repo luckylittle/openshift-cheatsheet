@@ -1,0 +1,3940 @@
+###########
+# FASTRAX #
+###########
+
+osadm new-project demo --display-name="OpenShift 3 Training" --description="OpenShift Training Project" --node-selector='region=primary' --admin='andrew'
+
+oc new-project <projectname>
+
+oadm router --replicas=2 --credentials='/etc/openshift/master/openshift-router.kubeconfig' \
+     --images='registry.access.redhat.com/openshift3/ose-${component}:${version}' \
+      --selector='region=infra'
+
+oadm registry --config=/etc/openshift/master/admin.kubeconfig  \
+	 --credentials=/etc/openshift/master/openshift-registry.kubeconfig  \
+  	  --images='registry.access.redhat.com/openshift3/ose-${component}:v3.0.0.0' \
+  		--selector='region=infra'
+
+oc login -u andrew ---server=https://ose3-master.example.com:8443
+
+oc get pods
+
+oc create -f hello-pod.json
+
+oc get routes
+
+oadm policy add-role-to-user admin andrew -n <projectname>
+
+oc new-app https://github.com/openshift/simple-openshift-sinatra-sti.git -o json | tee ~/simple-sinatra.json
+
+oc create -f ~/simple-sinatra.json
+
+for i in imagerepository buildconfig deploymentconfig service; do \
+> echo $i; oc get $i; echo -e "\n\n"; done
+
+oc get builds
+
+oc build-logs sin-simple-openshift-sinatra-sti-1
+
+https://github.com/openshift/training
+https://blog.openshift.com/openshift-v3-deep-dive-docker-kubernetes/
+https://blog.openshift.com/builds-deployments-services-v3/
+https://docs.docker.com/introduction/understanding-docker/
+
+##################
+# IMPLEMENTATION #
+##################
+
+Quick Install
+Lets you use interactive CLI utility to install OpenShift across set of hosts
+
+Installer made available by installing utility package (atomic-openshift-utils) on provisioning host
+
+https://install.openshift.com
+
+Uses Ansible playbooks in background
+
+Does not assume familiarity with Ansible
+
+Advanced Install
+For complex environments requiring deeper customization of installation and maintenance
+
+Uses Ansible playbooks
+
+Assumes familiarity with Ansible
+
+
+Prerequisites
+
+System requirements
+
+Set up DNS
+
+Prepare host
+
+OpenShift Enterprise installation
+
+Download and run installation utility
+
+Post-install tasks
+
+Deploy integrated Docker registry
+
+Deploy HAProxy router
+
+Populate OpenShift installation with image streams and templates
+
+Configure authentication and create project for users
+
+Set up and configure NFS server for use with persistent volumes
+
+DNS Setup
+To make environment accessible externally, create wildcard DNS entry
+
+Points to node hosting Default Router Container
+
+Resolves to OpenShift router IP address
+
+In lab and examples, this is infranode00 server
+
+If environment uses multiple routers (HAProxy instances), use external load balancer or round-robin setting
+
+Example: Create wildcard DNS entry for cloudapps in DNS server
+
+Has low TTL
+
+Points to public IP address of host where the router is deployed:
+
+*.cloudapps.example.com. 300 IN  A 85.1.3.5
+
+Overview
+To prepare your hosts for OpenShift Enterprise 3:
+
+Install Red Hat Enterprise Linux 7.2
+
+Register hosts with subscription-manager
+
+Manage base packages:
+
+git
+
+net-tools
+
+bind-utils
+
+iptables-services
+
+Manage services:
+
+Disable firewalld
+
+Enable iptables-services
+
+Install Docker 1.8.2 or later
+
+Make sure master does not require password for communication
+
+Password-Less Communication
+Ensure installer has password-less access to hosts
+
+Ansible requires user with access to all hosts
+
+To run installer as non-root user, configure password-less sudo rights on each destination host
+
+Firewall:
+Node to Node     4789 (UDP) Required between nodes for SDN communication between pods on separate hosts
+Node to Master   53 Provides DNS services within the environment (not DNS for external access)
+                 8443 Provides access to the API
+Master to Node   10250 Endpoint for master communication with nodes
+Master to Master 4789 (UDP) Required between nodes for SDN communication between pods on separate hosts
+                 53 Provides internal DNS services.
+                 2379 Used for standalone etcd (clustered) to accept changes in state.
+                 2380 etcd requires this port be open between masters for leader election and peering connections when using standalone etcd (clustered).
+                 4001 Used for embedded etcd (non-clustered) to accept changes in state.
+External - Master
+8443 CLI and IDE plug-ins communicate via REST to this port
+     Web console runs on this port
+External - Node (or nodes) hosting Default Router (HAProxy) container
+80, 443 Ports opened and bound to Default Router container
+        Proxy communication from external world to pods (containers) internally.
+Sample topology:
+
+Infrastructure nodes running in DMZ
+
+Application hosting nodes, master, other supporting infrastructure running in more secure network
+
+yum install wget git net-tools bind-utils iptables-services bridge-utils bash-completion
+yum update -y
+
+yum install docker
+Edit /etc/sysconfig/docker and add --insecure-registry 172.30.0.0/16 to OPTIONS parameter (OPTIONS=--selinux-enabled --insecure-registry 172.30.0.0/16)
+
+Docker Storage Configuration
+Docker default loopback storage mechanism:
+
+Not supported for production
+
+Appropriate for proof of concept environments
+
+For production environments:
+
+Create thin-pool logical volume
+
+Reconfigure Docker to use volume
+
+To do this use docker-storage-setup script after installing but before using Docker
+
+Script reads configuration options from /etc/sysconfig/docker-storage-setup
+
+Storage Options
+When configuring docker-storage-setup, examine available options
+
+Before starting docker-storage-setup, reinitialize Docker:
+
+# systemctl stop docker
+# rm -rf /var/lib/docker/*
+Create thin-pool volume from free space in volume group where root filesystem resides:
+
+Requires no configuration
+
+# docker-storage-setup
+Use existing volume group to create thin-pool:
+
+Example: docker-vg
+
+# cat /etc/sysconfig/docker-storage-setup
+DEVS=/dev/vdb
+VG=docker-vg
+# docker-storage-setup
+
+Storage Options: Example
+Use unpartitioned block device to create new volume group and thin-pool:
+
+Example: Use /dev/vdc device to create docker-vg:
+
+# cat /etc/sysconfig/docker-storage-setup
+DEVS=/dev/vdb
+VG=docker-vg
+SETUP_LVM_THIN_POOL=yes
+# docker-storage-setup
+Verify configuration:
+
+Should have dm.thinpooldev value in /etc/sysconfig/docker-storage and docker-pool device
+
+# lvs
+LV                  VG        Attr       LSize  Pool Origin Data%  Meta% Move
+docker-pool         docker-vg twi-a-tz-- 48.95g             0.00   0.44
+
+# cat /etc/sysconfig/docker-storage
+DOCKER_STORAGE_OPTIONS=--storage-driver devicemapper --storage-opt dm.fs=xfs --storage-opt dm.thinpooldev=/dev/mapper/docker--vg-docker--pool
+
+Restart Docker daemon
+
+Install OpenShift utils package that includes installer:
+
+# yum -y install atomic-openshift-utils
+Run following on host that has SSH access to intended master and nodes:
+
+$ atomic-openshift-installer install
+Follow onscreen instructions to install OpenShift Enterprise
+
+Installer asks for hostnames or IPs of masters and nodes and configures them accordingly
+
+Configuration file with all information provided is saved in ~/.config/openshift/installer.cfg.yml
+
+Can use this as answer file
+
+After installation, need to label nodes
+
+Lets scheduler use logic defined in scheduler.json when provisioning pods
+
+OpenShift Enterprise 2.0 introduced regions and zones
+
+Let organizations provide topologies for application resiliency
+
+Apps spread throughout zones within region
+
+Can make different regions accessible to users
+
+OpenShift Enterprise 3 topology-agnostic
+
+Provides advanced controls for implementing any topologies
+
+Example: Use regions and zones
+
+Other options: Prod and Dev, Secure and Insecure, Rack and Power
+
+Labels on nodes handle assignments of regions and zones at node level
+
+# oc label node master00-$guid.oslab.opentlc.com region="infra" zone="na"
+# oc label node infranode00-$guid.oslab.opentlc.com region="infra" zone="infranodes"
+# oc label node node00-$guid.oslab.opentlc.com region="primary" zone="east"
+# oc label node node01-$guid.oslab.opentlc.com region="primary" zone="west"
+
+Registry Container
+OpenShift Enterprise:
+
+Builds Docker images from source code
+
+Deploys them
+
+Manages lifecycle
+
+To enable this, deploy Docker registry in OpenShift Enterprise environment
+
+OpenShift Enterprise runs registry in pod on node, just like any other workload
+
+Deploying registry creates service and deployment configuration
+
+Both called docker-registry
+
+After deployment, pod created with name similar to docker-registry-1-cpty9
+
+To control where registry is deployed, use --selector flag to specify desired target
+
+Deploying Registry
+Environment includes infra region and dedicated infranode00 host
+
+Good practice for highly scalable environment
+
+Use better-performing servers for nodes or place them in DMZ for external access only
+
+To deploy registry anywhere in environment:
+
+$ oadm registry --config=admin.kubeconfig \
+    --credentials=openshift-registry.kubeconfig
+To ensure registry pod is hosted in infra region only:
+
+$ oadm registry --config=admin.kubeconfig \
+    --credentials=openshift-registry.kubeconfig \
+	   --selector='region=infra'
+
+NFS Storage for the Registry
+Registry stores Docker images, metadata
+
+If you deploy a pod with registry:
+
+Uses ephemeral volume
+
+Destroyed if pod exits
+
+Images built or pushed into registry disappear
+
+For production:
+
+Use persistent storage
+
+Use PersistentVolume and PersistentVolumeClaim objects for storage for registry
+
+For non-production:
+
+Other options exist
+
+Example: --mount-host:
+
+$ oadm registry --config=admin.kubeconfig \
+    --credentials=openshift-registry.kubeconfig \
+	   --selector='region=infra' \
+     --mount-host host:/export/dirname
+Mounts directory from node on which registry container lives
+
+If you scale up docker-registry deployment configuration, registry pods and containers might run on different nodes
+
+Default Router (aka Default HA-Proxy Router, other names):
+
+Modified deployment of HAProxy
+
+Entry point for traffic destined for services in OpenShift Enterprise installation
+
+HAProxy-based router implementation provided as default template router plug-in
+
+Uses openshift3/ose-haproxy-router image to run HAProxy instance alongside and router plug-in
+
+Supports HTTP(S) traffic and TLS-enabled traffic via SNI only
+
+Hosted inside OpenShift Enterprise
+
+Essentially a proxy
+
+Default router’s pod listens on host network interface on port 80 and 443
+
+Default router’s container listens on external/public ports
+
+Router proxies external requests for route names to IPs of actual pods identified by service associated with route
+
+Can populate OpenShift Enterprise installation with Red Hat-provided image streams and templates
+
+Make it easy to create new applications
+
+Template: Set of resources you can customize and process to produce configuration
+
+Defines list of parameters you can modify for consumption by containers
+
+Image Stream:
+
+Comprises of one or more Docker images identified by tags
+
+Presents single virtual view of related images
+
+Image Streams
+xPaaS middleware image streams provide images for:
+
+Red Hat JBoss Enterprise Application Platform
+
+Red Hat JBoss Web Server
+
+Red Hat JBoss A-MQ
+
+Can use images to build applications for those platforms
+
+To create or delete core set of image streams that use Red Hat Enterprise Linux 7-based images:
+
+oc create|delete -f \
+    examples/image-streams/image-streams-rhel7.json \
+    -n openshift
+To create image streams for xPaaS middleware images:
+
+$ oc create|delete -f \
+    examples/xpaas-streams/jboss-image-streams.json
+    -n openshift
+	
+Database Service Templates
+Database service templates make it easy to run database instance
+
+Other components can use
+
+Two templates provided for each database
+
+To create core set of database templates:
+
+$ oc create -f \
+    examples/db-templates -n openshift
+Can easily instantiate templates after creating them
+
+Gives quick access to database deployment
+
+QuickStart Templates
+Define full set of objects for running application:
+
+Build configurations: Build application from source located in GitHub public repository
+
+Deployment configurations: Deploy application image after it is built
+
+Services: Provide internal load balancing for application pods
+
+Routes: Provide external access and load balancing to application
+
+To create core QuickStart templates:
+
+$ oc create|delete -f \
+    examples/quickstart-templates -n openshift
+	
+Persistent Volume Object Definition
+{
+  "apiVersion": "v1",
+  "kind": "PersistentVolume",
+  "metadata": {
+    "name": "pv0001"
+  },
+  "spec": {
+    "capacity": {
+        "storage": "5Gi"
+    },
+    "accessModes": [ "ReadWriteOnce" ],
+    "nfs": {
+        "path": "/tmp",
+        "server": "172.17.0.2"
+    },
+    "persistentVolumeReclaimPolicy": "Recycle"
+  }
+}
+
+  -To create a persistent volume that can be claimed by a pod, you must create a PersistentVolume object in pod’s Project
+
+  -After PersistentVolume is created, a PersistentVolumeClaim must be created to ensure other pods and projects do not try to use PersistentVolume
+  
+Volume Security
+PersistentVolume objects created in context of project
+
+User request storage with PersistentVolumeClaim object in same project
+
+Claim lives only in user’s namespace
+
+Can be referenced by pod within same namespace
+
+Attempt to access persistent volume across project causes pod to fail
+
+NFS volume must be mountable by all nodes in cluster
+
+SELinux and NFS Export Settings
+Default: SELinux does not allow writing from pod to remote NFS server
+
+NFS volume mounts correctly but is read-only
+
+To enable writing in SELinux on each node:
+
+# setsebool -P virt_use_nfs 1
+Each exported volume on NFS server should conform to following:
+
+Set each export option in /etc/exports as follows:
+
+/example_fs *(rw,all_squash)
+Each export must be owned by nfsnobody and have following permissions:
+
+# chown -R nfsnobody:nfsnobody /example_fs
+# chmod 777
+
+Resource Reclamation
+OpenShift Enterprise implements Kubernetes Recyclable plug-in interface
+
+Reclamation tasks based on policies set by persistentVolumeReclaimPolicy key in PersistentVolume object definition
+
+Can reclaim volume after it is released from claim
+
+Can set persistentVolumeReclaimPolicy to Retain or Recycle:
+
+Retain: Volumes not deleted
+
+Default setting for key
+
+Recycle: Volumes scrubbed after being released from claim
+
+Once recycled, can bind NFS volume to new claim
+
+Automation
+Can provision OpenShift Enterprise clusters with persistent storage using NFS:
+
+Use disk partitions to enforce storage quotas
+
+Enforce security by restricting volumes to namespace that has claim to them
+
+Configure reclamation of discarded resources for each persistent volume
+
+Can use scripts to automate these tasks
+
+See sample Ansible playbook: https://github.com/openshift/openshift-ansible/tree/master/roles/kube_nfs_volumes
+
+Pods Overview
+OpenShift Enterprise leverages Kubernetes concept of pod
+
+Pod: One or more containers deployed together on host
+
+Smallest compute unit you can define, deploy, manage
+
+Pods are the rough equivalent of OpenShift Enterprise 2 gears
+
+Each pod allocated own internal IP address, owns entire port range
+
+Containers within pods can share local storage and networking
+
+Pod Changes and Management
+OpenShift Enterprise treats pods as static objects
+
+Cannot change pod definition while running
+
+To implement changes, OpenShift Enterprise:
+
+Terminates existing pod
+
+Recreates it with modified configuration, base image(s), or both
+
+Pods are expendable, do not maintain state when recreated
+
+Should use higher-level controllers to manage pods
+
+Pods should usually be managed by higher-level controllers rather than directly by users.
+
+Pods Lifecycle
+Lifecycle:
+
+Pod is defined
+
+Assigned to run on node
+
+Runs until containers exit or pods are removed
+
+
+Pods Definition File/Manifest
+
+apiVersion: v1
+ kind: Pod
+ metadata:
+   annotations: { ... }
+   labels:                               
+     deployment: example-name-1
+     deploymentconfig: example-name
+     example-name: default
+   generateName: example-name-1-       
+spec:
+   containers:                            
+   - env:                                 
+     - name: OPENSHIFT_CA_DATA
+       value: ...
+     - name: OPENSHIFT_CERT_DATA
+       value: ...
+     - name: OPENSHIFT_INSECURE
+       value: "false"
+     - name: OPENSHIFT_KEY_DATA
+       value: ...
+     - name: OPENSHIFT_MASTER
+       value: https://master.example.com:8443
+image: openshift3/example-image:v1.1.0.6 
+     imagePullPolicy: IfNotPresent
+     name: registry
+     ports:                              
+     - containerPort: 5000
+       protocol: TCP
+     resources: {}
+     securityContext: { ... }            
+     volumeMounts:                       
+     - mountPath: /registry
+       name: registry-storage
+     - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+       name: default-token-br6yz
+       readOnly: true
+ dnsPolicy: ClusterFirst
+   imagePullSecrets:
+   - name: default-dockercfg-at06w
+   restartPolicy: Always
+   serviceAccount: default               
+   volumes:                              
+   - emptyDir: {}
+     name: registry-storage
+   - name: default-token-br6yz
+     secret:
+       secretName: default-token-br6yz
+
+Services
+Kubernetes service serves as internal load balancer
+
+Identifies set of replicated pods
+
+Proxies connections it receives to identified pods
+
+Can add or remove backing pods to or from service while service remains consistently available
+
+Lets anything depending on service refer to it at consistent internal address
+
+Assign services IP address and port pair
+
+Proxy to appropriate backing pod when accessed
+
+Service uses label selector to find running containers that provide certain network service on certain port
+
+Can access server by IP address and DNS name
+
+Name created and resolved by local DNS server on master
+
+ apiVersion: v1
+ kind: Service
+ metadata:
+   name: example-name
+ spec:
+   selector:                  
+     example-label: example-value
+   portalIP: 172.30.136.123   
+   ports:
+   - nodePort: 0
+     port: 5000               
+     protocol: TCP
+     targetPort: 5000      
+
+Labels
+Use labels to organize, group, choose API objects
+
+Example: Tag pods with labels so services can use label selectors to identify pods to which they proxy
+
+Lets services reference groups of pods
+
+Can treat pods with different Docker containers as related entities
+
+Most objects can include labels in metadata
+
+Can use labels to group arbitrarily related objects
+
+Labels: Examples
+Labels = Simple key/value pairs:
+
+ labels:
+   key1: value1
+   key2: value2
+Scenario:
+
+Pod consisting of nginx Docker container, with role=webserver label
+
+Pod consisting of Apache httpd Docker container, also with role=webserver label
+
+Service or replication controller defined to use pods with role=webserver label treats both pods as part of same group
+
+Example: To remove all components with the label app=mytest:
+
+# oc delete all -l app=mytest
+
+The scheduler:
+
+Determines placement of new pods onto nodes within OpenShift Enterprise cluster
+
+Reads pod data and tries to find node that is good fit
+
+Is independent, standalone, pluggable solution
+
+Does not modify pod, merely creates binding that ties pod to node
+
+The scheduler:
+
+Determines placement of new pods onto nodes within OpenShift Enterprise cluster
+
+Reads pod data and tries to find node that is good fit
+
+Is independent, standalone, pluggable solution
+
+Does not modify pod, merely creates binding that ties pod to node
+
+Generic Scheduler
+OpenShift Enterprise provides generic scheduler
+
+Default scheduling engine
+
+Selects node to host pod in three-step operation:
+
+Filter nodes based on specified constraints/requirements
+
+Runs nodes through list of filter functions called predicates
+
+Prioritize qualifying nodes
+
+Pass each node through series of priority functions
+
+Assign node score between 0 - 10
+
+0 indicates bad fit, 10 indicates good fit
+
+Select the best fit node
+
+Sort nodes based on scores
+
+Select node with highest score to host pod
+
+If multiple nodes have same high score, select one at random
+
+Priority functions equally weighted by default; more important priorities can receive higher weight
+
+Scheduler Policy
+Selection of predicates and priority functions defines scheduler policy
+
+Administrators can provide JSON file that specifies predicates and priority functions to configure scheduler
+
+Overrides default scheduler policy
+
+If default predicates or priority functions required, must specify them in file
+
+Can specify path to scheduler policy file in master configuration file
+
+Default configuration applied if no scheduler policy file exists
+
+Default Scheduler Policy
+Includes following predicates:
+
+PodFitsPorts
+
+PodFitsResources
+
+NoDiskConflict
+
+MatchNodeSelector
+
+HostName
+
+Includes following priority functions:
+
+LeastRequestedPriority
+
+BalancedResourceAllocation
+
+ServiceSpreadingPriority
+
+Each has weight of 1 applied
+
+Available Predicates
+OpenShift Enterprise 3 provides predicates out of the box
+
+Can customize by by providing parameters
+
+Can combine to provide additional node filtering
+
+Two kinds of predicates: static and configurable
+
+Static Predicates
+Fixed names and configuration parameters that users cannot change
+
+Kubernetes provides following out of box:
+
+PodFitsPorts - Deems node fit for hosting pod based on absence of port conflicts
+PodFitsResources - Determines fit based on resource availability
+                   Nodes declare resource capacities, pods specify what resources they require
+                   Fit based on requested, rather than used, resources
+NoDiskConflict - Determines fit based on nonconflicting disk volumes
+                 Evaluates if pod can fit based on volumes requested and those already mounted
+MatchNodeSelector - Determines fit based on node selector query defined in pod
+HostName - Determines fit based on presence of host parameter and string match with host name
+
+Configurable Predicates
+User can configure to tweak function
+
+Can give them user-defined names
+
+Identified by arguments they take
+
+Can:
+
+Configure predicates of same type with different parameters
+
+Combine them by applying different user-defined names
+
+Configurable Predicates: ServiceAffinity and LabelsPresence
+ServiceAffinity: Filters out nodes that do not belong to topological level defined by provided labels
+
+Takes in list of labels
+
+Ensures affinity within nodes with same label values for pods belonging to same service
+
+If pod specifies label value in NodeSelector:
+
+Pod scheduled on nodes matching labels only
+
+{"name" : "Zone", "argument" : {"serviceAffinity" : {"labels" : ["zone"]}}}
+LabelsPresence: Checks whether node has certain label defined, regardless of value
+
+{"name" : "ZoneRequired", "argument" : {"labels" : ["retiring"], "presence" : false}}
+
+Available Priority Functions
+Can specify custom set of priority functions to configure scheduler
+
+OpenShift Enterprise provides several priority functions out of the box
+
+Can customize some priority functions by providing parameters
+
+Can combine priority functions and give different weights to influence prioritization results
+
+Weight required, must be greater than 0
+
+Static Priority Functions
+Do not take configuration parameters or inputs from user
+
+Specified in scheduler configuration using predefined names and weight calculations
+
+LeastRequestedPriority - Favors nodes with fewer requested resources
+                         Calculates percentage of memory and CPU requested by pods scheduled on node
+                         Prioritizes nodes with highest available or remaining capacity
+BalancedResourceAllocation - Favors nodes with balanced resource usage rate
+                             Calculates difference between consumed CPU and memory as fraction of capacity
+                             Prioritizes nodes with smallest difference
+                             Should always use with LeastRequestedPriority
+ServiceSpreadingPriority - Spreads pods by minimizing number of pods belonging to same service onto same machine
+EqualPriority - Gives equal weight of 1 to all nodes
+                Not required/recommended outside of testing.
+
+Configurable Priority Functions
+User can configure by providing certain parameters.
+
+Can give them user-defined name
+
+Identified by the argument they take
+
+ServiceAntiAffinity: Takes label
+
+Ensures spread of pods belonging to same service across group of nodes based on label values
+
+Gives same score to all nodes with same value for specified label
+
+Gives higher score to nodes within group with least concentration of pods
+
+LabelsPreference: Prefers either nodes that have particular label defined or those that do not, regardless of value
+
+Use Cases
+Important use case for scheduling within OpenShift Enterprise: Support affinity and anti-affinity policies
+
+OpenShift Enterprise can implement multiple infrastructure topological levels
+
+Administrators can define multiple topological levels for infrastructure (nodes)
+
+To do this, specify labels on nodes
+
+Example: region = r1, zone = z1, rack = s1
+
+Label names have no particular meaning
+
+Administrators can name infrastructure levels anything
+
+Examples: City, building, room
+
+Administrators can define any number of levels for infrastructure topology
+
+Three levels usually adequate
+
+Example: regions → zones → racks
+
+Administrators can specify combination of affinity/anti-affinity rules at each level
+
+Affinity
+Administrators can configure scheduler to specify affinity at any topological level or multiple levels
+
+Affinity indicates all pods belonging to same service are scheduled onto nodes belonging to same level
+
+Handles application latency requirements by letting administrators ensure peer pods do not end up being too geographically separated
+
+If no node available within same affinity group to host pod, pod not scheduled
+
+Anti-Affinity
+Administrators can configure scheduler to specify anti-affinity at any topological level or multiple levels
+
+Anti-affinity (or spread) indicates that all pods belonging to same service are spread across nodes belonging to that level
+
+Ensures that application is well spread for high availability
+
+Scheduler tries to balance service pods evenly across applicable nodes
+
+Sample Policy Configuration
+{
+	"kind" : "Policy",
+	"version" : "v1",
+	"predicates" : [
+		{"name" : "PodFitsPorts"},
+		{"name" : "PodFitsResources"},
+		{"name" : "NoDiskConflict"},
+		{"name" : "MatchNodeSelector"},
+		{"name" : "HostName"}
+	],
+	"priorities" : [
+		{"name" : "LeastRequestedPriority", "weight" : 1},
+		{"name" : "BalancedResourceAllocation", "weight" : 1},
+		{"name" : "ServiceSpreadingPriority", "weight" : 1}
+	]
+}
+
+Topology Example 1
+Example: Three topological levels
+
+Levels: region (affinity) → zone (affinity) → rack (anti-affinity)
+{
+	"kind" : "Policy",
+	"version" : "v1",
+	"predicates" : [
+		...
+		{"name" : "RegionZoneAffinity", "argument" : {"serviceAffinity" : {"labels" : ["region", "zone"]}}}
+	],
+	"priorities" : [
+		...
+    {"name" : "RackSpread", "weight" : 1, "argument" : {"serviceAntiAffinity" : {"label" : "rack"}}}
+	]
+}
+
+Topology Example 2
+Example: Three topological levels
+
+Levels: city (affinity) → building (anti-affinity) → room (anti-affinity)
+{
+	"kind" : "Policy",
+	"version" : "v1",
+	"predicates" : [
+		...
+		{"name" : "CityAffinity", "argument" : {"serviceAffinity" : {"labels" : ["city"]}}}
+	],
+	"priorities" : [
+		...
+		{"name" : "BuildingSpread", "weight" : 1, "argument" : {"serviceAntiAffinity" : {"label" : "building"}}},
+		{"name" : "RoomSpread", "weight" : 1, "argument" : {"serviceAntiAffinity" : {"label" : "room"}}}
+	]
+}
+
+Topology Example 3
+Only use nodes with region label defined
+
+Prefer nodes with zone label defined
+{
+	"kind" : "Policy",
+	"version" : "v1",
+	"predicates" : [
+		...
+		{"name" : "RequireRegion", "argument" : {"labelsPresence" : {"labels" : ["region"], "presence" : true}}}
+
+	],
+	"priorities" : [
+		...
+		{"name" : "ZonePreferred", "weight" : 1, "argument" : {"labelPreference" : {"label" : "zone", "presence" : true}}}
+	]
+}
+
+Builds Overview
+Build: Process of transforming input parameters into resulting object
+
+Most often used to transform source code into runnable image
+
+BuildConfig object: Definition of entire build process
+
+OpenShift Enterprise build system provides extensible support for build strategies
+
+Based on selectable types specified in build API
+
+Three build strategies available:
+
+Docker build
+
+S2I build
+
+Custom build
+
+Docker and S2I builds supported by default
+
+Builds Overview: Resulting Objects
+Resulting object of build depends on type of builder used
+
+Docker and S2I builds: Resulting objects are runnable images
+
+Custom builds: Resulting objects are whatever author of builder image specifies
+
+For list of build commands, see Developer’s Guide: https://docs.openshift.com/enterprise/latest/architecture/core_concepts/builds_and_image_streams.html
+
+Builds and Image Streams
+
+Docker Build
+Docker build strategy invokes plain docker build command
+
+Expects repository with Dockerfile and required artifacts to produce runnable image
+
+S2I Build
+S2I: Tool for building reproducible Docker images
+
+Produces ready-to-run images by injecting user source into base Docker image (source) and assembling new Docker image
+
+Ready to use with docker run
+
+S2I supports incremental builds
+
+Reuse previously downloaded dependencies, previously built artifacts, etc.
+
+
+Builds and Image Streams
+
+S2I Advantages
+Image flexibility	
+Can write S2I scripts to layer application code onto almost any existing Docker image
+
+Takes advantage of existing ecosystem
+
+Currently, S2I relies on tar to inject application source, so image must be able to process tarred content
+
+Speed	
+S2I assembly process can perform large number of complex operations without creating new layer at each step
+
+Results in faster process
+
+Can write S2I scripts to reuse artifacts stored in previous version of application image
+
+Eliminates need to download or build image each time build is run
+
+Patchability	
+S2I lets you rebuild application consistently if underlying image needs patch because of a security issue
+
+Docker Build
+Docker build strategy invokes plain docker build command
+
+Expects repository with Dockerfile and required artifacts to produce runnable image
+
+S2I Build
+S2I: Tool for building reproducible Docker images
+
+Produces ready-to-run images by injecting user source into base Docker image (source) and assembling new Docker image
+
+Ready to use with docker run
+
+S2I supports incremental builds
+
+Reuse previously downloaded dependencies, previously built artifacts, etc.
+
+S2I Advantages
+Image flexibility	
+Can write S2I scripts to layer application code onto almost any existing Docker image
+
+Takes advantage of existing ecosystem
+
+Currently, S2I relies on tar to inject application source, so image must be able to process tarred content
+
+Speed	
+S2I assembly process can perform large number of complex operations without creating new layer at each step
+
+Results in faster process
+
+Can write S2I scripts to reuse artifacts stored in previous version of application image
+
+Eliminates need to download or build image each time build is run
+
+Patchability	
+S2I lets you rebuild application consistently if underlying image needs patch because of a security issue
+
+PaaS operator restricts build operations instead of allowing arbitrary actions, such as in Dockerfile
+
+Can avoid accidental or intentional abuses of build system
+
+Operational security	
+Building arbitrary Dockerfile exposes host system to root privilege escalation
+
+Malicious user can exploit this because Docker build process is run as user with Docker privileges
+
+S2I restricts operations performed as root user and can run scripts as non-root user
+
+User efficiency	
+S2I prevents developers from performing arbitrary yum install type operations during application build
+
+Results in slow development iteration
+
+Ecosystem efficiency	
+S2I encourages shared ecosystem of images
+
+Can leverage best practices for applications
+
+Custom Build
+Custom build strategy lets you define builder image
+
+Responsible for entire build process
+
+Using own builder image lets you customize build process
+
+Builder can call out to external system
+
+Example: Jenkins or other automation agent
+
+Creates image and pushes it into registry
+
+Image Streams
+Image stream similar to Docker image repository
+
+Contains Docker images identified by tags
+
+Presents single virtual view of related images
+
+May contain images from:
+
+Own image in OpenShift’s integrated Docker Registry
+
+Other image streams
+
+Docker image repositories from external registries
+
+OpenShift Enterprise stores complete metadata about each image
+
+Examples: command, entrypoint, environment variables, etc.
+
+OpenShift Enterprise images immutable
+
+OpenShift Enterprise components can:
+
+Watch for updates in an image stream
+
+Receive notifications when new images added
+
+React by performing build or deployment
+
+Image Pull Policy
+Each container in pod has Docker image
+
+Can refer to image in pod after creating it and pushing it to registry
+
+When OpenShift Enterprise creates containers, uses imagePullPolicy to determine whether to pull image prior to starting container
+
+Three values for imagePullPolicy:
+
+Always: Always pull image
+
+IfNotPresent: Pull image only if it does not already exist on node
+
+Never: Never pull image
+
+If not specified, OpenShift Enterprise sets container’s imagePullPolicy parameter based on image’s tag
+
+If tag is latest, OpenShift Enterprise defaults imagePullPolicy to Always
+
+
+Replication Controllers
+
+Replication Controllers Overview
+Replication controller ensures specified number of pod replicas running at all times
+
+If pods exit or are deleted, replication controller instantiates more
+
+If more pods running than desired, replication controller deletes as many as necessary
+
+
+Replication Controllers
+
+Replication Controllers Definition
+Replication controller definition includes:
+
+Number of replicas desired (can adjust at runtime)
+
+Pod definition for creating replicated pod
+
+Selector for identifying managed pods
+
+Selector: Set of labels all pods managed by replication controller should have
+
+Included in pod definition that replication controller instantiates
+
+Used by replication controller to determine how many pod instances are running, to adjust as needed
+
+Not replication controller’s job to perform auto-scaling based on load or traffic
+
+Does not track either
+
+Replication Controllers Overview
+Replication controller ensures specified number of pod replicas running at all times
+
+If pods exit or are deleted, replication controller instantiates more
+
+If more pods running than desired, replication controller deletes as many as necessary
+
+Replication Controllers Definition
+Replication controller definition includes:
+
+Number of replicas desired (can adjust at runtime)
+
+Pod definition for creating replicated pod
+
+Selector for identifying managed pods
+
+Selector: Set of labels all pods managed by replication controller should have
+
+Included in pod definition that replication controller instantiates
+
+Used by replication controller to determine how many pod instances are running, to adjust as needed
+
+Not replication controller’s job to perform auto-scaling based on load or traffic
+
+Does not track either
+
+Replication Controllers Definition File/Manifest
+apiVersion: v1
+kind: ReplicationController
+metadata:
+  name: frontend-1
+spec:
+  replicas: 1  
+  selector:    
+    name: frontend
+  template:    
+    metadata:
+      labels:  
+        name: frontend
+    spec:
+      containers:
+      - image: openshift/hello-openshift
+        name: helloworld
+        ports:
+        - containerPort: 8080
+          protocol: TCP
+      restartPolicy: Always
+	  
+Routers: Overview
+Administrators can deploy routers (like HAProxy Default Router) in OpenShift Enterprise cluster
+
+Let external clients use route resources created by developers
+
+Routers provide external hostname mapping and load balancing to applications over protocols that pass distinguishing information directly to router
+
+Currently, OpenShift Enterprise routers support these protocols:
+
+HTTP
+
+HTTPS (with SNI)
+
+WebSockets
+
+TLS with SNI
+
+HAProxy Default Router
+HAProxy default router implementation: Reference implementation for template router plug-in
+
+Uses openshift3/OpenShift Enterprise-haproxy-router image to run HAProxy instance alongside template router plug-in
+
+Supports unsecured, edge terminated, re-encryption terminated, and passthrough terminated routes matching on HTTP vhost and request path
+
+F5 Router
+Integrates with existing F5 BIG-IP® system in your environment
+
+Supports unsecured, edge terminated, re-encryption terminated, and passthrough terminated routes matching on HTTP vhost and request path
+
+Has feature parity with the HAProxy template route and some additional features
+
+Routers and Routes
+route object describes service to expose and host FQDN
+
+Example: route could specify hostname myapp.mysubdomain.company.com and service MyappFrontend
+
+Not router
+
+Creating route object for application lets external web client access application on OpenShift Enterprise using DNS name
+
+Router uses service selector to find service and endpoints backing service
+
+Bypasses service-provided load balancing and replaces with router’s load balancing
+
+Routers watch cluster API and update own configuration based on changes in API objects
+
+Routers may be containerized or virtual
+
+Can deploy custom routers to communicate API object modifications to another system, such as F5
+
+Routers and Routes: Requests
+To reach a router, requests for hostnames must resolve via DNS to a router or set of routers
+
+Recommended router setup:
+
+Define a sub-domain with a wildcard DNS entry pointing to a virtual IP
+
+Back virtual IP with multiple router instances on designated nodes
+
+Other approaches possible
+
+Sticky Sessions
+Underlying router configuration determines sticky session implementation
+
+Default HAProxy template implements sticky sessions using balance source directive
+
+Balances based on source IP
+
+Template router plug-in provides service name and namespace to underlying implementation
+
+Can use for advanced configuration such as implementing stick-tables that synchronize between set of peers
+
+Specific configuration for router implementation stored in haproxy-config.template, located in /var/lib/haproxy/conf directory of router container
+
+Resource Types
+
+Working with applications means manipulating OpenShift resources in background:
+
+Create
+
+Destroy
+
+Scale
+
+Build
+
+Can reinforce quotas against resources
+
+OpenShift Enterprise 3 includes different resource types
+
+Can refer to:
+
+Hardware resources: Memory, CPU, other platform resources
+
+OpenShift Enterprise resources: Pods, services, replication controllers
+
+Can define most OpenShift Enterprise resources with .JSON or .YAML file
+
+Can construct API call to make request from OpenShift Enterprise API
+
+Users and User Types
+Interaction with OpenShift Enterprise associated with user
+
+OpenShift Enterprise user object represents actor
+
+May grant system permissions by adding roles to actors or groups
+
+User types:
+Regular Users - Way most interactive OpenShift Enterprise users are represented
+                Created automatically in system upon first login, or via API
+                Represented with User object
+System Users - Many created automatically when infrastructure defined
+               Let infrastructure interact with API securely
+      Include:
+      Cluster administrator with access to everything
+      Per-node user
+      Users for use by routers and registries
+      Various others
+      Anonymous system user
+      Used by default for unauthenticated requests
+	  Examples: system:admin,system:node:node1.example.com
+	  
+Users and User Types: Service Accounts
+Service accounts: Special system users associated with a project
+
+When pod requires access to make an API call to OpenShift Enterprise master:
+
+ServiceAccount created to represent a pod’s credentials
+
+Some service accounts created automatically when project created
+
+Can create more to:
+
+Define access to project contents
+
+Make API calls to OpenShift Enterprise master
+
+Service accounts are represented with the ServiceAccount object.
+
+Examples: system:serviceaccount:default:deployer, system:serviceaccount:foo:builder
+
+Namespaces
+Kubernetes namespace: Provides mechanism to scope cluster resources
+
+In OpenShift Enterprise, project is Kubernetes namespace with additional annotations
+
+Namespaces provide scope for:
+
+Named resources to avoid naming collisions
+
+Delegated management authority to trusted users
+
+Ability to limit community resource consumption
+
+Most objects in system scoped by namespace
+
+Some excepted and have no namespace
+
+Examples: Nodes and users
+
+Projects
+Project: Kubernetes namespace with additional annotations
+
+Central vehicle for managing resource access for regular users
+
+Lets community of users organize and manage content in isolation from other communities
+
+Users either:
+
+Receive access to projects from administrators
+
+Have access to own projects if allowed to create them
+
+Each project scopes own:
+
+Objects: Pods, services, replication controllers, etc.
+
+Policies: Rules for which users can or cannot perform actions on objects
+
+Constraints: Quotas for objects that can be limited
+
+Service accounts: Users that act automatically with access to project objects
+
+Every user must authenticate to access OpenShift Enterprise
+
+Requests lacking valid authentication authenticated as anonymous system user
+
+Policy determines what user is authorized to do
+
+
+Web Console Authentication
+Access web console at _<master-public-addr>_:8443 (By default)
+
+Automatically redirected to login page
+
+Provide login credentials to obtain token to make API calls
+
+Use web console to navigate projects
+
+CLI Authentication
+Download client from Red Hat Product Downloads or install atomic-openshift-clients rpm package
+
+After installing, use oc login to authenticate from command line:
+
+$ oc login -u andrew --server="https://YourOpenShiftMasterFQDN:8443"
+Command’s interactive flow helps establish session to OpenShift Enterprise server with provided credentials
+
+Example: Authenticate as OpenShift Enterprise cluster administrator (usually root user):
+
+system:admin user is password-free user that requires token
+
+Requires the root user’s ``~/.kube/config` file, on the master.
+
+$ oc login -u system:admin -n openshift
+Set username and project (namespace) to log in to
+
+CLI Authentication: oc login Options
+$ oc login [--username=<username>]  [--password=<password>] [--server=<server>] [--certificate-authority=</path/to/file.crt>|--insecure-skip-tls-verify]
+
+-s, --server
+
+Specifies host name of OpenShift Enterprise server
+
+If flag provides server, command does not ask for it interactively
+
+-u, --username and -p, --password
+
+Lets you specify credentials to log in to OpenShift Enterprise server
+
+If flags provide username or password, command does not ask for it interactively
+
+--certificate-authority
+
+Correctly and securely authenticates with OpenShift Enterprise server that uses HTTPS
+
+Must provide path to certificate authority file
+
+--insecure-skip-tls-verify
+
+Allows interacti on with HTTPS server while bypassing server certificate checks
+
+Not secure if
+
+You oc login to HTTPS server that does not provide valid certificate
+
+This or --certificate-authority not provided
+
+What Is ResourceQuota?
+OpenShift Enterprise can limit:
+
+Number of objects created in project
+
+Amount of compute/memory/storage resources requested across objects in namespace/project
+
+Several teams can share single OpenShift Enterprise cluster
+
+Each team in own project
+
+Prevents teams from starving each other of cluster resources
+
+ResourceQuota object: Enumerates hard resource usage limits per project
+
+Can limit:
+
+Total number of particular type of object created in project
+
+Total amount of compute resources consumed in project
+
+Quota Enforcement
+After quota created in project:
+
+Project restricts ability to create resources that may violate quota constraint
+
+Until it calculated usage statistics
+
+If project modification will exceed quota:
+
+Server denies action
+
+Returns error message
+
+Includes:
+
+Quota constraint violated
+
+Current system usage stats
+
+Quota Enforcement: Usage Changes
+After quota created and usage statistics are up-to-date:
+
+Project accepts content creation
+
+When you create resources:
+
+Quota usage incremented immediately upon request
+
+When you delete resources:
+
+Quota use decremented during next full recalculation of project quota statistics
+
+May take moment to reduce quota usage statistics to their current observed system value
+
+Sample Quota Definition File
+{
+  "apiVersion": "v1",
+  "kind": "ResourceQuota",
+  "metadata": {
+    "name": "quota" 
+  },
+  "spec": {
+    "hard": {
+      "memory": "1Gi", 
+      "cpu": "20", 
+      "pods": "10", 
+      "services": "5", 
+      "replicationcontrollers":"5", 
+      "resourcequotas":"1" 
+    }
+  }
+}
+
+Applying a Quota to a Project
+$ oc create -f create_quota_def_file.json --namespace=your_project_name
+
+Overview
+When using CLI or web console, user’s API token authenticates to OpenShift Enterprise API.
+
+You can use the OpenShift Command Line utility (oc and oadm) from any node
+
+When regular user’s credentials not available, components can make API calls independently using service accounts.
+
+Examples:
+
+Replication controllers make API calls to create/delete pods
+
+Applications inside containers make API calls for discovery
+
+External applications make API calls for monitoring/integration
+
+Service accounts provide flexible way to control API access without sharing user credentials
+
+Usernames and Groups
+Every service account has associated username
+
+Can be granted roles like regular user
+
+ServiceAccount username derived from project and name: system:serviceaccount:<project>:<name>
+
+Example: To add view role to monitor-agent service account in monitored-project:
+
+$ oc policy add-role-to-user view system:serviceaccount:monitored-project:monitor-agent
+
+Usernames and Groups: Service Account Groups
+Every service account is also a member of two groups:
+
+system:serviceaccounts: Includes all service accounts in system
+
+system:serviceaccounts:<project>: Includes all service accounts in a specified project
+
+Examples:
+
+To allow all service accounts in all projects to view resources in monitored-project:
+
+$ oc policy add-role-to-group view system:serviceaccounts -n monitored-project
+To allow all service accounts in monitor project to edit resources in monitored-project:
+
+$ oc policy add-role-to-group edit system:serviceaccounts:monitor -n monitored-project
+
+Enable Service Account Authentication
+Service accounts authenticate to API using tokens signed by private RSA key
+
+Authentication layer verifies signature using matching public RSA key
+
+To enable service account token generation, update serviceAccountConfig stanza to specify:
+
+privateKeyFile for signing
+
+Matching public key file in publicKeyFiles list
+
+Managed Service Accounts
+Service accounts required in each project
+
+Run builds, deployments, other pods
+
+managedNames setting in master configuration file determines service accounts automatically created in project:
+
+serviceAccountConfig:
+  ...
+  managedNames: 
+  - builder 
+  - deployer 
+  - default 
+  - ...
+All service accounts in project given system:image-puller role
+
+Allows pulling images from any image stream in project using internal Docker registry.
+
+
+Routes
+Overview
+A route: Exposes service by giving it externally reachable hostname
+
+Router can consume defined route and endpoints identified by service
+
+Provides named connectivity
+
+Lets external clients reach applications
+
+Route consists of:
+
+Route name
+
+Service selector
+
+Security configuration (optional)
+
+Creating Routes With the Command Line
+Can create routes using:
+
+API call
+
+Object definition file (YAML, JSON)
+
+CLI tool
+
+Example: Use CLI to create route with hostname exposing service hello-service:
+
+$ oc expose service hello-service --hostname=hello-openshift.cloudapps-r2d2.oslab.opentlc.com
+$ oc get routes
+
+Route Types
+Routes can be secured or unsecured
+
+Unsecured routes simplest to configure
+
+Require no key or certificates
+
+Secured routes offer security
+
+Connections remain private
+
+Let you use several types of TLS termination to serve certificates to client
+
+Default Router supports:
+
+Undesecured routes
+
+Edge secured routes
+
+Passthrough secured routes
+
+Re-encryption termination secured routes
+
+Route Types: Unsecured Route Object YAML Definition
+apiVersion: v1
+kind: Route
+metadata:
+  name: route-unsecured
+spec:
+  host: www.example.com
+  to:
+    kind: Service
+    name: service-name
+
+Route Types: Path-Based Routes
+Path-based routes: Specify path component
+
+Can compare against URL
+
+Allows using same hostname to serve multiple routes
+
+Each route with different path
+
+Requires HTTP-based route traffic
+
+Route Types: An Unsecured Route With a Path
+apiVersion: v1
+kind: Route
+metadata:
+  name: route-unsecured
+spec:
+  host: www.example.com
+  path: "/test"   
+  to:
+    kind: Service
+    name: service-name
+	
+Route Types: Secured Routes
+Secured routes: Specify TLS termination of route
+
+Key and certificate(s) also option
+
+TLS termination in OpenShift Enterprise relies on SNI (Server Name Indication)
+
+Serves custom certificates
+
+Non-SNI traffic received on port 443 handled with TLS termination and default certificate
+
+Might not match requested hostname, causing errors
+
+Learn more: https://en.wikipedia.org/wiki/Server_Name_Indication
+
+Secured TLS Termination Types: Edge Termination
+Three types of TLS termination for secured routes
+
+With edge termination, TLS termination occurs at router
+
+Prior to proxying traffic to destination
+
+Front end of router serves TLS certificates
+
+Must be configured into route
+
+Otherwise router’s default certificate used for TLS termination
+
+Secured TLS Termination Types: Edge Termination Route Definition
+apiVersion: v1
+kind: Route
+metadata:
+  name: route-edge-secured
+spec:
+  host: www.example.com
+  to:
+    kind: Service
+    name: service-name
+  tls:
+    termination: edge            
+    key: |-                      
+      BEGIN PRIVATE KEY
+      [...]
+      END PRIVATE KEY
+    certificate: |-              
+      BEGIN CERTIFICATE
+      [...]
+      END CERTIFICATE
+    caCertificate: |-            
+      BEGIN CERTIFICATE
+      [...]
+      END
+	  
+Secured TLS Termination Types: Passthrough Termination
+With passthrough termination, encrypted traffic sent straight to destination
+
+Router does not provide TLS termination
+
+No key or certificate required on router
+
+Destination pod responsible for serving certificates for traffic at endpoint
+
+Currently only method that supports requiring client certificates
+
+AKA two-way authentication
+
+Secured TLS Termination Types: Passthrough Termination Route Definition
+apiVersion: v1
+kind: Route
+metadata:
+  name: route-passthrough-secured
+spec:
+  host: www.example.com
+  to:
+    kind: Service
+    name: service-name
+  tls:
+    termination: passthrough
+	
+Secured TLS Termination Types: Re-encryption Termination
+Re-encryption is variation on edge termination
+
+Router terminates TLS with certificate
+
+Re-encrypts connection to endpoint, which may have different certificate
+
+Full connection path encrypted, even over internal network
+
+Secured TLS Termination Types: Re-encryption Termination Route Definition
+apiVersion: v1
+kind: Route
+metadata:
+  name: route-pt-secured
+spec:
+  host: www.example.com
+  to:
+    kind: Service
+    name: service-name
+  tls:
+    termination: reencrypt        
+    key: [as in edge termination]
+    certificate: [as in edge termination]
+    caCertificate: [as in edge termination]
+    destinationCaCertificate: |-  
+      BEGIN CERTIFICATE
+      [...]
+      END CERTIFICATE
+	  
+Routes With Hostnames
+To expose services externally:
+
+Route lets you associate service with externally reachable hostname
+
+Edge hostname routes traffic to service
+
+Example: Route with specified host:
+
+apiVersion: v1
+kind: Route
+metadata:
+  name: host-route
+spec:
+  host: www.example.com  
+  to:
+    kind: Service
+    name: service-name
+	
+Routes Without Hostnames
+If hostname not provided in route specification, OpenShift Enterprise generates one
+
+Form: $routename[.$namespace].$suffix
+
+Example: Route definition without host:
+
+apiVersion: v1
+kind: Route
+metadata:
+  name: no-route-hostname
+spec:
+  to:
+    kind: Service
+    name: service-name
+	
+Custom Default Routing Subdomain
+Cluster administrator can use OpenShift Enterprise master configuration file to customize environment’s:
+
+Suffix
+
+Default routing subdomain
+
+Example: Set configured suffix to cloudapps.mydomain.com:
+
+OpenShift Enterprise master configuration snippet (master-config.yaml):
+
+routingConfig:
+  subdomain: cloudapps.mydomain.com
+With master node(s) running above configuration, generated hostname for host added to my-namespace would be:
+
+no-route-hostname.my-namespace.cloudapps.mydomain.com
+
+
+Persistent Volumes
+Overview
+PersistentVolume object: Storage resource in OpenShift Enterprise cluster
+
+Administrator provides storage by creating PersistentVolume from sources such as:
+
+NFS
+
+GCE Persistent Disks (Google Compute)
+
+EBS Volumes (Amazon Elastic Block Stores)
+
+GlusterFS
+
+OpenStack Cinder
+
+Ceph RBD
+
+iSCSI
+
+Fiber Channel
+
+Must associate PersistentVolume with project
+
+Requesting Storage
+Can make storage available by laying claims to resource
+
+To request storage resources, use PersistentVolumeClaim
+
+Claim paired with volume that can fulfill request
+
+Requesting Storage: Prerequisite
+For user to claim a volume (PersistentVolumeClaim), a PersistentVolume needs to be created
+
+Cluster administrator needs to define and create pv in project:
+
+{
+  "apiVersion": "v1",
+  "kind": "PersistentVolume",
+  "metadata": {
+    "name": "pv0001"
+  },
+  "spec": {
+    "capacity": {
+        "storage": "5Gi"
+    },
+    "accessModes": [ "ReadWriteOnce" ],
+    "nfs": {
+        "path": "/exports/ose_shares/share154",
+        "server": "172.17.0.2"
+    },
+    "persistentVolumeReclaimPolicy": "Recycle"
+  }
+}
+
+Requesting Storage: PersistentVolumeClaim Definition
+After defining a PersistentVolume in a project:
+
+Can create a PersistentVolumeClaim object to request storage:
+
+{
+    "apiVersion": "v1",
+    "kind": "PersistentVolumeClaim",
+    "metadata": {
+        "name": "claim1"
+    },
+    "spec": {
+        "accessModes": [ "ReadWriteOnce" ],
+        "resources": {
+            "requests": {
+                "storage": "5Gi"
+            }
+        }
+    }
+}
+
+Volume and Claim Binding
+PersistentVolume: Specific resource
+
+PersistentVolumeClaim: Request for resource with specific attributes
+
+Example: Storage size
+
+In between two is process that:
+
+Matches claim to volume and binds them together
+
+Lets you use claim as volume in pod
+
+OpenShift Enterprise finds volume backing claim and mounts it into pod
+
+Volume and Claim Binding: Status
+To tell whether claim or volume is bound:
+$ oc get pvc
+$ oc get pv
+
+Claims as Volumes in Pods
+Pod uses a PersistentVolumeClaim as a volume
+
+OpenShift Enterprise finds claim with given name in same namespace as pod
+
+Uses claim to find volume to mount
+
+Example: Pod definition with claim:
+
+{
+    "apiVersion": "v1",
+    "kind": "Pod",
+    "metadata": {
+        "name": "mypod",
+        "labels": {
+            "name": "frontendhttp"
+        }
+    },
+    "spec": {
+        "containers": [{
+            "name": "myfrontend",
+            "image": "nginx",
+            "ports": [{
+                "containerPort": 80,
+                "name": "http-server"
+            }],
+            "volumeMounts": [{
+                "mountPath": "/var/www/html",
+                "name": "pvol"
+            }]
+        }],
+        "volumes": [{
+            "name": "pvol",
+            "persistentVolumeClaim": {
+                "claimName": "claim1"
+            }
+        }]
+    }
+}
+
+Disk Quota Enforcement
+Use disk partitions to enforce disk quotas and size constraints
+
+Each partition can be own export
+
+Each export = one persistent volume
+
+OpenShift enforces unique names for persistent volumes,
+
+Administrator determines uniqueness of NFS volume server and path
+
+Enforcing quotas lets user:
+
+Request persistent storage by specific amount
+
+Match with volume of equal or greater capacity
+
+Resource Reclamation
+OpenShift Enterprise implements Kubernetes Recyclable plug-in interface
+
+Reclamation tasks based on policies set by persistentVolumeReclaimPolicy key in PersistentVolume object definition
+
+Can reclaim volume after it is released from claim
+
+Can set persistentVolumeReclaimPolicy to Retain or Recycle:
+
+Retain: Volumes not deleted
+
+Default setting for key
+
+Recycle: Volumes scrubbed after being released from claim
+
+Once recycled, can bind NFS volume to new claim
+
+Creating Applications
+Overview
+
+Users can create new OpenShift Enterprise application using web console or oc new-app command
+
+Users can specify application creation from source code, image, or template
+
+Application is set of deployed objects such as DeploymentConfig, BuildConfig, ReplicationController, pod, service, and others
+
+oc new-app uses S2I (Source-to-Image) build process
+
+What Is S2I?
+Tool for building reproducible Docker images
+
+Produces ready-to-run images by injecting user source into Docker image and assembling new Docker image
+
+New image incorporates base image (builder image) and built source
+
+Ready to use within OpenShift Enterprise or other platforms (e.g., Atomic Host)
+
+Integrated Docker builds
+Developer>Dockerfile>Build>Image>Deploy
+
+S2I builds
+Developer>Codes>Build>Add layer>Image>Deploy
+
+Build and Deployment Automation
+Integrated Docker registry and automated image builds
+
+Source code deployments leveraging S2I build automation
+
+Configurable deployment patterns—rolling, etc.
+
+Build Process
+Build: Process of creating runnable OpenShift Enterprise image
+
+Three build strategies:
+
+Docker: Invoke Docker build, expect repository with Dockerfile and directories required for Docker build process
+
+S2I: Build reproducible Docker images from source code and builder image
+
+Custom: Build with user-defined process, possibly integrated with existing CI/CD deployment (e.g., Jenkins)
+
+BuildConfig Object
+Defines single build and set of triggers that start the build
+
+REST object
+
+Can be used in POST to API server to create new instance
+
+Consists of:
+
+Triggers
+
+Parameters
+
+BuildConfig Triggers
+Three trigger types:
+
+GitHub webhook: Specifies which repository changes invoke a new build; specific to GitHub API
+
+Generic webhook: Invokes new build when notified; payload slightly different from GitHub
+
+Image change: Invoked when new image is available in specified image repository
+
+BuildConfig Parameters
+Three parameter types:
+
+Source: Describes SCM used to locate the sources; supports Git
+
+Strategy: Describes invoked build type and build type details
+
+Output: Describes resulting image name, tag, and registry to which OpenShift Enterprise should push image
+
+Build Strategies
+OpenShift Enterprise build system provides extensible support for build strategies based on selectable types specified in build API
+
+Docker build
+
+Invokes docker build, expects repository with Dockerfile and required directories
+
+Suitable for prebuilt Docker container
+
+Need to create Docker image and inject code into it
+
+S2I build
+
+Builds reproducible Docker images
+
+Produces ready-to-run images by injecting user source into Docker image and assembling new Docker image
+
+New ready-to-use image incorporates base image and built source
+
+S2I Build
+S2I builds replace the developer experience and build process of OpenShift Enterprise 2
+
+Developer now specifies:
+
+Repository where project is located
+
+Builder image that defines language and framework for writing application
+
+S2I assembles new image that runs application defined by source using framework defined by builder image
+
+S2I Build Example
+Example in this section creates image using S2I process
+
+Uses Ruby Sinatra gem as application framework
+
+https://github.com/openshift/simple-openshift-sinatra-sti
+
+Uses ruby-20-rhel7 builder image
+
+Processes shown:
+
+Running image in pod
+
+Creating service for pod
+
+Creating route for external access
+
+Creating the Build File
+oc new-app:
+
+Examines directory tree, remote repo, or other sources
+
+Attempts to generate JSON configuration so OpenShift Enterprise can build image
+
+Defines service object for application
+
+To create application definition, use oc new-app to generate definition file:
+
+$ oc new-app https://github.com/openshift/simple-openshift-sinatra-sti.git -o json | tee ~/simple-sinatra.json
+
+JSON Build File
+{
+    "kind": "List",
+    "apiVersion": "v1",
+    "metadata": {},
+    "items": [
+        {
+            "kind": "ImageStream",
+            "apiVersion": "v1",
+            "metadata": {
+                "name": "simple-openshift-sinatra-sti",
+                "creationTimestamp": null,
+                "labels": {
+                    "app": "simple-openshift-sinatra-sti"
+                },
+                "annotations": {
+                    "openshift.io/generated-by": "OpenShiftNewApp"
+                }
+            },
+            "spec": {},
+            "status": {
+                "dockerImageRepository": ""
+            }
+        },
+        {
+            "kind": "BuildConfig",
+            "apiVersion": "v1",
+            "metadata": {
+                "name": "simple-openshift-sinatra-sti",
+                "creationTimestamp": null,
+                "labels": {
+                    "app": "simple-openshift-sinatra-sti"
+                },
+                "annotations": {
+                    "openshift.io/generated-by": "OpenShiftNewApp"
+                }
+            },
+            "spec": {
+                "triggers": [
+                    {
+                        "type": "GitHub",
+                        "github": {
+                            "secret": "9PATsUhFWasUl91pzW1B"
+                        }
+                    },
+                    {
+                        "type": "Generic",
+                        "generic": {
+                            "secret": "lVS9l8FY8WAgq4rRhaez"
+                        }
+                    },
+                    {
+                        "type": "ConfigChange"
+                    },
+                    {
+                        "type": "ImageChange",
+                        "imageChange": {}
+                    }
+                ],
+                "source": {
+                    "type": "Git",
+                    "git": {
+                        "uri": "https://github.com/openshift/simple-openshift-sinatra-sti.git"
+                    }
+                },
+                "strategy": {
+                    "type": "Source",
+                    "sourceStrategy": {
+                        "from": {
+                            "kind": "ImageStreamTag",
+                            "namespace": "openshift",
+                            "name": "ruby:latest"
+                        }
+                    }
+                },
+                "output": {
+                    "to": {
+                        "kind": "ImageStreamTag",
+                        "name": "simple-openshift-sinatra-sti:latest"
+                    }
+                },
+                "resources": {}
+            },
+            "status": {
+                "lastVersion": 0
+            }
+        },
+        {
+            "kind": "DeploymentConfig",
+            "apiVersion": "v1",
+            "metadata": {
+                "name": "simple-openshift-sinatra-sti",
+                "creationTimestamp": null,
+                "labels": {
+                    "app": "simple-openshift-sinatra-sti"
+                },
+                "annotations": {
+                    "openshift.io/generated-by": "OpenShiftNewApp"
+                }
+            },
+            "spec": {
+                "strategy": {
+                    "resources": {}
+                },
+                "triggers": [
+                    {
+                        "type": "ConfigChange"
+                    },
+                    {
+                        "type": "ImageChange",
+                        "imageChangeParams": {
+                            "automatic": true,
+                            "containerNames": [
+                                "simple-openshift-sinatra-sti"
+                            ],
+                            "from": {
+                                "kind": "ImageStreamTag",
+                                "name": "simple-openshift-sinatra-sti:latest"
+                            }
+                        }
+                    }
+                ],
+                "replicas": 1,
+                "selector": {
+                    "app": "simple-openshift-sinatra-sti",
+                    "deploymentconfig": "simple-openshift-sinatra-sti"
+                },
+                "template": {
+                    "metadata": {
+                        "creationTimestamp": null,
+                        "labels": {
+                            "app": "simple-openshift-sinatra-sti",
+                            "deploymentconfig": "simple-openshift-sinatra-sti"
+                        },
+                        "annotations": {
+                            "openshift.io/generated-by": "OpenShiftNewApp"
+                        }
+                    },
+                    "spec": {
+                        "volumes": [
+                            {
+                                "name": "simple-openshift-sinatra-sti-volume-1",
+                                "emptyDir": {}
+                            }
+                        ],
+                        "containers": [
+                            {
+                                "name": "simple-openshift-sinatra-sti",
+                                "image": "library/simple-openshift-sinatra-sti:latest",
+                                "ports": [
+                                    {
+                                        "containerPort": 8080,
+                                        "protocol": "TCP"
+                                    }
+                                ],
+                                "resources": {},
+                                "volumeMounts": [
+                                    {
+                                        "name": "simple-openshift-sinatra-sti-volume-1",
+                                        "mountPath": "/run"
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                }
+            },
+            "status": {}
+        },
+        {
+            "kind": "Service",
+            "apiVersion": "v1",
+            "metadata": {
+                "name": "simple-openshift-sinatra",
+                "creationTimestamp": null,
+                "labels": {
+                    "app": "simple-openshift-sinatra-sti"
+                },
+                "annotations": {
+                    "openshift.io/generated-by": "OpenShiftNewApp"
+                }
+            },
+            "spec": {
+                "ports": [
+                    {
+                        "name": "8080-tcp",
+                        "protocol": "TCP",
+                        "port": 8080,
+                        "targetPort": 8080
+                    }
+                ],
+                "selector": {
+                    "app": "simple-openshift-sinatra-sti",
+                    "deploymentconfig": "simple-openshift-sinatra-sti"
+                }
+            },
+            "status": {
+                "loadBalancer": {}
+            }
+        }
+    ]
+}
+
+JSON Build File - Service
+Describes service to be created to support application
+
+Note the selector line
+
+ {
+            "kind": "Service",
+            "apiVersion": "v1",
+            "metadata": {
+                "name": "simple-openshift-sinatra",
+                "creationTimestamp": null
+            },
+            "spec": {
+                "ports": [
+                    {
+                        "name": "simple-openshift-sinatra-sti-tcp-8080",
+                        "protocol": "TCP",
+                        "port": 8080,
+                        "targetPort": 8080,
+                    }
+                ],
+                "selector": {
+                    "deploymentconfig": "simple-openshift-sinatra-sti"
+                },
+                "portalIP": ""
+            },
+            "status": {
+                "loadBalancer": {}
+            }
+        }
+		
+JSON Build File - ImageStream
+Describes ImageStream resource to be created to support application
+
+OpenShift components such as builds and deployments can watch an image stream to receive notifications when new images are added and react by performing a build or a deployment.
+
+OpenShift Enterprise rebuilds when a change like this occurs
+
+        {
+            "kind": "ImageStream",
+            "apiVersion": "v1",
+            "metadata": {
+                "name": "simple-openshift-sinatra-sti",
+                "creationTimestamp": null
+            },
+            "spec": {
+                "tags": [
+                    {
+                        "name": "latest",
+                        "from": {
+                            "kind": "DockerImage",
+                            "name": "simple-openshift-sinatra-sti:latest"
+                        }
+                    }
+                ]
+            },
+            "status": {
+                "dockerImageRepository": ""
+            }
+        },
+		
+JSON Build File - BuildConfig
+Defines:
+
+Triggers that start rebuild of application
+
+Parameters that define repository and builder image for build process
+
+ {
+            "kind": "BuildConfig",
+            "apiVersion": "v1",
+            "metadata": {
+                "name": "simple-openshift-sinatra-sti",
+                "creationTimestamp": null
+            },
+            "spec": {
+                "triggers": [
+                    {
+                        "type": "GitHub",
+                        "github": {
+                            "secret": "egsfGzfgMcKPPCfL88oz"
+                        }
+                    },
+                    {
+                        "type": "Generic",
+                        "generic": {
+                            "secret": "8fcmnyr0RbkzLPCPY9Sv"
+                        }
+                    },
+                    {
+                        "type": "ImageChange",
+                        "imageChange": {}
+                    }
+                ],
+                "source": {
+                    "type": "Git",
+                    "git": {
+                        "uri": "https://github.com/openshift/simple-openshift-sinatra-sti.git"
+                    }
+                },
+                "strategy": {
+                    "type": "Source",
+                    "sourceStrategy": {
+                        "from": {
+                            "kind": "ImageStreamTag",
+                            "namespace": "openshift",
+                            "name": "ruby:latest"
+                        }
+                    }
+                },
+                "output": {
+                    "to": {
+                        "kind": "ImageStreamTag",
+                        "name": "simple-openshift-sinatra-sti:latest"
+                    }
+                },
+                "resources": {}
+            },
+            "status": {
+                "lastVersion": 0
+            }
+        },
+		
+JSON Build File - DeploymentConfig
+Defines:
+
+Additional image rebuild
+
+Number of replicas application will have
+
+{
+            "kind": "DeploymentConfig",
+            "apiVersion": "v1",
+            "metadata": {
+                "name": "simple-openshift-sinatra-sti",
+                "creationTimestamp": null
+            },
+            "spec": {
+                "strategy": {
+                    "type": "Recreate",
+                    "resources": {}
+                },
+                "triggers": [
+                    {
+                        "type": "ConfigChange"
+                    },
+                    {
+                        "type": "ImageChange",
+                        "imageChangeParams": {
+                            "automatic": true,
+                            "containerNames": [
+                                "simple-openshift-sinatra-sti"
+                            ],
+                            "from": {
+                                "kind": "ImageStreamTag",
+                                "name": "simple-openshift-sinatra-sti:latest"
+                            }
+                        }
+                    }
+                ],
+                "replicas": 1,
+                "selector": {
+                    "deploymentconfig": "simple-openshift-sinatra-sti"
+                },
+				
+JSON Build File - Template
+Defines container deployment template
+
+    },
+                "template": {
+                    "metadata": {
+                        "creationTimestamp": null,
+                        "labels": {
+                            "deploymentconfig": "simple-openshift-sinatra-sti"
+                        }
+                    },
+                    "spec": {
+                        "containers": [
+                            {
+                                "name": "simple-openshift-sinatra-sti",
+                                "image": "simple-openshift-sinatra-sti:latest",
+                                "ports": [
+                                    {
+                                        "name": "simple-openshift-sinatra-sti-tcp-8080",
+                                        "containerPort": 8080,
+                                        "protocol": "TCP"
+                                    }
+                                ],
+                                "resources": {}
+                            }
+                        ]
+                    }
+                }
+				
+Deploying an S2I Build Image
+In basic S2I process, OpenShift Enterprise:
+
+Sets up components to build source code into Docker image
+
+On command, builds Docker image
+
+Deploys Docker image as pod with associated service
+
+Creating the Build Environment
+To create build environment and start the build, use oc create on .json file:
+
+$ oc create -f ~/simple-sinatra.json
+Creates entries for:
+
+ImageRepository
+
+BuildConfig
+
+DeploymentConfig
+
+Service
+
+Watching the S2I Build
+To see builds and their status:
+
+$ oc get builds
+
+To follow build process:
+
+oc logs build/sin-simple-openshift-sinatra-sti-1
+
+Application Creation
+
+Overview
+Create new OpenShift Enterprise application using web console or oc new-app
+
+OpenShift Enterprise creates application by specifying source code, image, or template
+
+new-app looks for images on local Docker installation (if available), in Docker registry, or OpenShift Enterprise image stream
+
+If you specify source code, new-app constructs:
+
+Build configuration that builds source into new application image
+
+Deployment configuration that deploys image
+
+Service to provide load-balanced access to deployment running image
+
+New App From Source Code
+
+Specifying Source Code
+new-app can use source code from local or remote Git repository
+
+If only source repository is specified, new-app tries to determine build strategy (docker or source)
+
+For source builds, also tries to determine builder image
+
+To tell new-app to use subdirectory of source code repository, use --context-dir flag
+
+When specifying remote URL, can specify Git reference to use by appending #[reference] to end of URL
+
+New App From Source Code
+
+Specifying Source Code - Examples
+To create application using Git repository at current directory:
+
+$ oc new-app
+To create application using remote Git repository and context subdirectory:
+
+$ oc new-app https://github.com/openshift/sti-ruby.git \
+    --context-dir=2.0/test/puma-test-app
+To create application using remote Git repository with specific branch reference:
+
+$ oc new-app https://github.com/openshift/ruby-hello-world.git#beta4
+
+New App From Source Code
+
+Build Strategy Detection
+If new-app finds a Dockerfile in the repository, it uses docker build strategy
+
+Otherwise, new-app uses source strategy
+
+To specify strategy, set --strategy flag to source or docker
+
+Example: To force new-app to use docker strategy for local source repository:
+
+$ oc new-app /home/user/code/myapp --strategy=docker
+
+Language Detection
+To override image that new-app uses as builder for source repository, specify image and repository using ~ (tilde) as separator
+
+To use image stream myproject/my-ruby to build the source at remote GitHub repository:
+
+$ oc new-app myproject/my-ruby~https://github.com/openshift/ruby-hello-world.git
+To use Docker image openshift/ruby-20-centos7:latest to build source in local repository:
+
+$ oc new-app openshift/ruby-20-centos7:latest~/home/user/code/my-ruby-app
+
+Specifying an Image
+new-app generates artifacts to deploy existing image as application
+
+Images can come from:
+
+OpenShift Enterprise server
+
+Specific registry
+
+Docker Hub
+
+Local Docker server
+
+new-app attempts to determine type of image from arguments passed to it
+
+Can explicitly tell new-app what image is:
+
+For Docker image, use --docker-image argument
+
+For image stream, use -i|--image argument
+
+Specifying an Image - Examples
+To create application using image in a private registry, use full Docker image specification
+
+To create application from MySQL image in Docker Hub:
+
+$ oc new-app mysql
+To create application from local registry:
+
+$ oc new-app myregistry:5000/example/myimage
+
+To create application from existing image stream, specify:
+
+Namespace (optional)
+
+Name
+
+Tag (optional)
+
+To create application from existing image stream with specific tag:
+
+$ oc new-app my-stream:v1
+
+Specifying a Template
+new-app can instantiate template from stored template or template file
+
+To instantiate stored template, specify template name as argument
+
+To create application from stored template:
+
+$ oc create -f examples/sample-app/application-template-stibuild.json
+$ oc new-app ruby-helloworld-sample
+Reference
+For detailed information about storing a template and using it to create an application, see: https://github.com/openshift/origin/tree/master/examples/sample-app
+
+To use template in file system directly, without first storing it in OpenShift Enterprise:
+
+Use -f|--file argument
+
+Specify file name as argument to new-app
+
+To create application from template in file:
+
+$ oc new-app -f examples/sample-app/application-template-stibuild.json
+
+Template Parameters
+When creating application based on template, use -p|--param argument to set parameter values defined by template
+
+To specify template parameters with template:
+
+$ oc new-app ruby-helloworld-sample \
+    -p ADMIN_USERNAME=admin,ADMIN_PASSWORD=mypassword
+	
+	Specifying Environment Variables
+When generating applications from source or image, use -e|--env argument to specify environment to be passed to application container at runtime
+
+To set environment variables when creating application for database image:
+
+$ oc new-app openshift/postgresql-92-centos7 \
+    -e POSTGRESQL_USER=user \
+    -e POSTGRESQL_DATABASE=db \
+    -e POSTGRESQL_PASSWORD=password
+	
+Specifying Labels
+When generating applications from source, images, and templates, use -l|--label flag to add labels to objects created by new-app
+
+Recommended because labels make it easy to collectively select, manipulate, and delete objects associated with application
+
+To use label flag to label objects created by new-app:
+
+$ oc new-app https://github.com/openshift/ruby-hello-world -l name=hello-world
+
+Command Output
+new-app generates OpenShift Enterprise resources that build, deploy, and run applications
+
+Resources created in current project use names derived from input source repositories or images
+
+Can change this behavior
+
+Output Without Creation
+To preview resources new-app will create, use -o|--output flag with value of yaml or json
+
+Shows resources that will be created, but does not create them
+
+Review resources, or redirect output to file to edit
+
+Then use oc create to create OpenShift Enterprise resources
+
+To output new-app artifacts to file, edit them, then create them using oc create:
+
+$ oc new-app https://github.com/openshift/ruby-hello-world -o json > myapp.json
+$ vi myapp.json
+$ oc create -f myapp.json
+
+Object Names
+new-app objects normally named after source repository or image
+
+Can set name of the application produced by adding --name flag
+
+To create new-app artifacts with different name:
+
+$ oc new-app https://github.com/openshift/ruby-hello-world --name=myapp
+Object Project or Namespace
+new-app creates objects in current project
+
+To tell new-app to create objects in different project, use -n|--namespace flag
+
+To create new-app artifacts in different project:
+
+$ oc new-app https://github.com/openshift/ruby-hello-world -n myproject
+
+Objects Created
+Artifacts/objects created by new-app depend on artifacts passed as input: source repository, image, or template
+
+BuildConfig - BuildConfig entry is created for each source repository specified on the command line. BuildConfig specifies the strategy to use, the source location, and the build output location.
+
+ImageStream - For BuildConfig, two ImageStream entries are usually created: one to represent the input image and another to represent the output image. The input image can be the builder image for source builds or FROM image for Docker builds. If a Docker image is specified as input to new-app, then an image stream is also created for that image.
+
+DeploymentConfig - DeploymentConfig entry is created to deploy the output of a build or a specified image.
+
+Service - The new-app command attempts to detect exposed ports in input images. It uses the lowest numeric exposed port to generate a service that exposes that port. To expose a different port, after new-app has completed, use the oc expose command to generate additional services.
+
+Service
+
+The new-app command attempts to detect exposed ports in input images. It uses the lowest numeric exposed port to generate a service that exposes that port. To expose a different port, after new-app has completed, use the oc expose command to generate additional services.
+
+Grouping Images and Source in Single Pod
+new-app can deploy multiple images in single pod
+
+To indicate images to group, use + separator
+
+Can also use --group argument to specify images to group
+
+To group image built from source repository with other images, specify its builder image in group
+
+To deploy two images in single pod:
+
+$ oc new-app nginx+mysql
+To deploy together image built from source and external image:
+
+$ oc new-app \
+    ruby~https://github.com/openshift/ruby-hello-world \
+    mysql \
+    --group=ruby+mysql
+	
+	
+What Is a Template?
+Describes set of resources that can be customized and processed to produce configuration
+
+Parameterized list OpenShift Enterprise uses to create list of resources, including services, pods, routes, and build configurations
+
+Defines set of labels to apply to every resource created by template
+
+Reference
+https://docs.openshift.com/enterprise/latest/dev_guide/templates.html
+
+What Are Templates For?
+Can create instantly deployable applications for developers or customers
+
+Can use preset variables or randomize values (like passwords)
+
+Template Elements
+{
+  "kind": "Template",
+  "apiVersion": "v1",
+  "metadata": {
+    "name": "quickstart-keyvalue-application", 
+    "creationTimestamp": null,
+    "annotations": {
+      "description": "This is an example of a Ruby and MySQL application on OpenShift 3", 
+      "iconClass": "icon-ruby",
+      "tags": "instant-app,ruby,mysql"
+
+    }
+  },
+  "parameters": [  
+    {
+      "name": "username"
+      "value": "admin"
+      "description": "administrative user"
+    }
+  ],
+  "labels": {  
+    "custom_label": "Label_Name"
+  },
+  "objects": [  
+    {
+      ...
+    }
+  ]
+}
+
+Labels
+Used to manage generated resources
+
+Apply to every resource that is generated from the template
+
+Used to organize, group, or select objects and resources
+
+Resources and pods are "tagged" with labels
+
+Allows services and replication controllers to:
+
+Indicate pods they relate to
+
+Reference groups of pods
+
+Treat pods with different Docker containers as similar entities
+
+Parameters
+Share configuration values between different objects in template
+
+Example: Database username, password, or port needed by front-end pods to communicate to back-end database pods
+
+Values can be static or generated by template
+
+Templates let you define parameters that take on values
+
+Value substituted wherever parameter is referenced
+
+Can define references in any text field in objects list field
+
+Example:
+
+Can set generate to expression to specify generated values
+
+from specifies pattern for generating value using pseudo-regular expression syntax
+
+ parameters:
+   - name: PASSWORD
+     description: "The random user password"
+     generate: expression
+     from: "[a-zA-Z0-9]{12}"
+	 
+Objects
+Can be any resources that needs to be created for template
+
+Examples: pods, services, replication controllers, and routes
+
+Other objects can be build configurations and image streams
+
+Example Template
+metadata
+
+{
+  "kind": "Template",
+  "apiVersion": "v1",
+  "metadata": {
+    "name": "quickstart-keyvalue-application",
+    "creationTimestamp": null,
+    "annotations": {
+      "description": "This is an example of a Ruby and MySQL application on OpenShift 3",
+      "iconClass": "icon-ruby",
+      "tags": "instant-app,ruby,mysql"
+    }
+  },
+  
+Example Template
+objects: Service frontend / web
+
+"objects": [
+    {
+      "kind": "Service",
+      "apiVersion": "v1",
+      "metadata": {
+      "name": "frontend",
+        "creationTimestamp": null
+      },
+      "spec": {
+        "ports": [
+          {
+            "name": "web",
+            "protocol": "TCP",
+            "port": 5432,
+            "targetPort": 8080,
+            "nodePort": 0
+          }
+        ],
+        "selector": {
+          "name": "frontend"
+        },
+        "portalIP": "",
+        "type": "ClusterIP",
+        "sessionAffinity": "None"
+      },
+      "status": {
+        "loadBalancer": {}
+      }
+    },
+	
+Example Template
+objects: Service database
+
+  {
+    *"kind": "Service",
+      "apiVersion": "v1",
+      "metadata": {
+        "name": "database",
+        "creationTimestamp": null
+      },
+      "spec": {
+        "ports": [
+          {
+            "name": "db",
+            "protocol": "TCP",
+            "port": 5434,
+            "targetPort": 3306,
+            "nodePort": 0
+          }
+        ],
+        "selector": {
+          "name": "database"
+        },
+        "portalIP": "",
+        "type": "ClusterIP",
+        "sessionAffinity": "None"
+      },
+      "status": {
+        "loadBalancer": {}
+      }
+    },
+	
+Example Template
+objects: Route
+
+    {
+      pass:quotes[*"kind": "Route",*]
+      "apiVersion": "v1",
+      "metadata": {
+        "name": "route-edge",
+        "creationTimestamp": null
+      },
+      "spec": {
+        pass:quotes[*"host": "integrated.cloudapps.example.com",*]
+        "to": {
+          "kind": "Service",
+          pass:quotes[*"name": "frontend"*]
+        }
+      },
+      "status": {}
+    },
+	
+Example Template
+objects: ImageStream ruby-sample and ruby-20-rhel7
+
+ {
+pass:quotes[*"kind": "ImageStream",*]
+      "apiVersion": "v1",
+      "metadata": {
+        pass:quotes[*"name": "ruby-sample",*]
+        "creationTimestamp": null
+      },
+      "spec": {},
+      "status": {
+        "dockerImageRepository": ""
+      }
+    },
+    {
+      pass:quotes[*"kind": "ImageStream",*]
+      "apiVersion": "v1",
+      "metadata": {
+        pass:quotes[*"name": "ruby-20-rhel7",*]
+        "creationTimestamp": null
+      },
+      "spec": {
+        "dockerImageRepository": "registry.access.redhat.com/openshift3/ruby-20-rhel7"
+      },
+      "status": {
+        "dockerImageRepository": ""
+      }
+    },
+	
+Example Template
+objects: DeploymentConfig frontend
+
+ {
+      "kind": "DeploymentConfig",
+      "apiVersion": "v1",
+      "metadata": {
+        "name": "frontend",
+        "creationTimestamp": null
+      },
+      "spec": {
+        "strategy": {
+          "type": "Recreate"
+        },
+        "triggers": [
+          {
+            "type": "ImageChange",
+            "imageChangeParams": {
+              "automatic": true,
+              "containerNames": [
+                "ruby-helloworld"
+              ],
+              "from": {
+                "kind": "ImageStreamTag",
+                "name": "ruby-sample:latest"
+              },
+              "lastTriggeredImage": ""
+            }
+          },
+          {
+            "type": "ConfigChange"
+          }
+        ],
+        "replicas": 2,
+        "selector": {
+          "name": "frontend"
+        },
+        "template": {
+          "metadata": {
+            "creationTimestamp": null,
+            "labels": {
+              "name": "frontend"
+            }
+          },
+          "nodeSelector": {
+            "region": "primary"
+          },
+          "spec": {
+            "containers": [
+              {
+                "name": "ruby-helloworld",
+                "image": "ruby-sample",
+                "ports": [
+                  {
+                    "containerPort": 8080,
+                    "protocol": "TCP"
+                  }
+                ],
+              "env": [
+                  {
+                    "name": "ADMIN_USERNAME",
+                    "value": "${ADMIN_USERNAME}"
+                  },
+                  {
+                    "name": "ADMIN_PASSWORD",
+                    "value": "${ADMIN_PASSWORD}"
+                  },
+                  {
+                    "name": "MYSQL_USER",
+                    "value": "${MYSQL_USER}"
+                  },
+                  {
+                    "name": "MYSQL_PASSWORD",
+                    "value": "${MYSQL_PASSWORD}"
+                  },
+                  {
+                    "name": "MYSQL_DATABASE",
+                    "value": "${MYSQL_DATABASE}"*]
+                  }
+                ],
+                "resources": {},
+                "terminationMessagePath": "/dev/termination-log",
+                "imagePullPolicy": "IfNotPresent",
+                "capabilities": {},
+                "securityContext": {
+                  "capabilities": {},
+                  "privileged": false
+                }
+              }
+            ],
+            "restartPolicy": "Always",
+            "dnsPolicy": "ClusterFirst",
+            "serviceAccount": ""
+          }
+        }
+      },
+      "status": {}
+    },
+	
+Template Example - objects: DeploymentConfig database
+  {
+      "kind": "DeploymentConfig",
+      "apiVersion": "v1",
+      "metadata": {
+        "name": "database",
+        "creationTimestamp": null
+      },
+      "spec": {
+        "strategy": {
+          "type": "Recreate"
+        },
+        "triggers": [
+          {
+            "type": "ConfigChange"
+          }
+        ],
+        "replicas": 1,
+        "selector": {
+          "name": "database"
+        },
+        "template": {
+          "metadata": {
+            "creationTimestamp": null,
+            "labels": {
+              "name": "database"
+            }
+          },
+          "nodeSelector": {
+            "region": "primary"
+          },
+          "spec": {
+            "containers": [
+              {
+                "name": "ruby-helloworld-database",
+                "image": "registry.access.redhat.com/openshift3/mysql-55-rhel7:latest",
+                "ports": [
+                  {
+                    "containerPort": 3306,
+                    "protocol": "TCP"
+                  }
+                ],
+                "env": [
+                  {
+                    "name": "MYSQL_USER",
+                    "value": "${MYSQL_USER}"
+                  },
+                  {
+                    "name": "MYSQL_PASSWORD",
+                    "value": "${MYSQL_PASSWORD}"
+                  },
+                  {
+                    "name": "MYSQL_DATABASE",
+                    "value": "${MYSQL_DATABASE}"*]
+                  }
+                ],
+                "resources": {},
+                "terminationMessagePath": "/dev/termination-log",
+                "imagePullPolicy": "Always",
+                "capabilities": {},
+                "securityContext": {
+                  "capabilities": {},
+                  "privileged": false
+                }
+              }
+            ],
+            "restartPolicy": "Always",
+            "dnsPolicy": "ClusterFirst",
+            "serviceAccount": ""
+          }
+        }
+      },
+      "status": {}
+    }
+	
+Example Template - parameters
+  ],
+  "parameters": [
+    {
+      "name": "ADMIN_USERNAME",
+      "description": "administrator username",
+      "generate": "expression",
+      "from": "admin[A-Z0-9]{3}"
+    },
+    {
+      "name": "ADMIN_PASSWORD",
+      "description": "administrator password",
+      "generate": "expression",
+      "from": "[a-zA-Z0-9]{8}"
+    },
+    {
+      "name": "MYSQL_USER",
+      "description": "database username",
+      "generate": "expression",
+      "from": "user[A-Z0-9]{3}"
+    },
+    {
+      "name": "MYSQL_PASSWORD",
+      "description": "database password",
+      "generate": "expression",
+      "from": "[a-zA-Z0-9]{8}"
+    },
+    {
+      "name": "MYSQL_DATABASE",
+      "description": "database name",
+      "value": "root"
+    }
+  ],
+  "labels": {
+    "template": "application-template-stibuild"
+  }
+  
+Uploading a Template
+Can create configuration from template using CLI or management console
+
+To use from web console, template must exist in project or global template library
+
+Can create JSON template file, then upload it with CLI to project’s template library by passing file:
+
+$ oc create -f <filename>
+Can upload template to different project with -n option and project name:
+
+$ oc create -f <filename> -n <project>
+Template now available for configuration using management console or CLI
+
+Generating a Configuration
+oc process examines template, generates parameters, and outputs JSON configuration
+
+Create configuration with oc create
+
+To generate configuration:
+
+$ oc process -f <filename>
+Can override parameters defined in JSON file by adding -v option and parameters
+
+To override ADMIN_USERNAME and MYSQL_DATABASE parameters to create configuration with customized environment variables:
+
+$ oc process -f my_template_file.json -v ADMIN_USERNAME=root,MYSQL_DATABASE=admin
+Creating an Application From a Template
+oc new-app can instantiate template from stored template or template file
+
+To instantiate stored template, specify template name as argument
+
+To create application from stored template or template file:
+
+# Create an application based on a stored template, explicitly setting a parameter value
+$ oc new-app --template=ruby-helloworld-sample --param=MYSQL_USER=admin
+
+# Create an application based on a template file, explicitly setting a parameter value
+  $ oc new-app --file=./example/myapp/template.json --param=MYSQL_USER=admin
+  
+
+Processing Template Parameters
+Overview
+May want to build components separately
+
+Database team deploys database templates and development team deploys front-end template
+
+Treat as two applications wired together:
+
+Process and create template for frontend
+
+Extract values of mysql credentials from configuration file
+
+Process and create template for db
+
+Override values with values extracted from frontend configuration file
+
+Process frontend
+First stand up front end of application
+
+Process frontend template and create configuration file:
+
+$ oc process -f frontend-template.json > frontend-config.json
+Create configuration:
+
+$ oc create -f frontend-config.json
+When command is run, resources are created and build started
+
+Extract Configuration File Values
+Before creating db template, review frontend configuration file
+
+Note that database password and other parameters were generated
+
+For existing deployment, can extract these values with oc env
+
+grep -A 1 MYSQL_* frontend-config.json
+                                            "name": "MYSQL_USER",
+                                            "key": "MYSQL_USER",
+                                            "value": "userMXG"
+
+                                            "name": "MYSQL_PASSWORD",
+                                            "key": "MYSQL_PASSWORD",
+                                            "value": "slDrggRv"
+
+                                            "name": "MYSQL_DATABASE",
+                                            "key": "MYSQL_DATABASE",
+                                            "value": "root"
+											
+Process db
+Values used to create frontend can be used to process db template
+
+To process db template and create configuration file:
+
+$ oc process -f db-template.json  -v MYSQL_USER=userMXG,MYSQL_PASSWORD=slDrggRv,MYSQL_DATABASE=root > db-config.json
+This example processes and creates db template while overriding mysql credentials' variables
+
+Create configuration:
+
+$ oc create -f db-template.json
+Can also process and create application in single step:
+
+oc process -f db-template.json \
+    -v MYSQL_USER=userMXG,MYSQL_PASSWORD=slDrggRv,MYSQL_DATABASE=root \
+    | oc create -f -
+Or, use oc new-app to achieve same result:
+
+$ oc new-app --file=./db-template.json --param=MYSQL_USER=userMXG,MYSQL_PASSWORD=slDrggRv,MYSQL_DATABASE=root
+
+Deployments
+
+Overview
+OpenShift Enterprise deployment is replication controller based on user-defined template called deployment configuration
+
+Deployments are created manually or in response to trigger events
+
+Deployment system provides:
+
+Configuration template for deployments
+
+Triggers that drive automated deployments
+
+Customizable strategies for transitioning from previous deployment to new deployment
+
+Rollbacks to a previous deployment
+
+Manual replication scaling
+
+Deployment configuration version increments each time new deployment is created from configuration
+
+Deployments and Deployment Configurations
+With concept of deployments, OpenShift Enterprise adds expanded support for software development and deployment life cycle
+
+Deployment creates new replication controller and lets it start up pods
+
+Also provides ability to transition from existing image deployment to new one
+
+Can define hooks to run before or after replication controller is created
+
+DeploymentConfig object defines deployment:
+
+Elements of ReplicationController definition
+
+Triggers for creating new deployment automatically
+
+Strategy for transitioning between deployments
+
+Life-cycle hooks
+
+Each time deployment is triggered (manual or automatic), deployer pod manages deployment:
+
+Scales down old replication controller
+
+Scales up new replication controller
+
+Runs hooks
+
+Deployment pod remains after deployment to retain logs
+
+To enable easy rollback, when one deployment is superseded by another, previous replication controller is retained
+
+Example DeploymentConfig definition:
+
+apiVersion: v1
+kind: DeploymentConfig
+metadata:
+  name: frontend
+spec:
+  replicas: 5
+  selector:
+    name: frontend
+  template: { ... }
+  triggers:
+  - type: ConfigChange 
+  - imageChangeParams:
+      automatic: true
+      containerNames:
+      - helloworld
+      from:
+        kind: ImageStreamTag
+        name: hello-openshift:latest
+    type: ImageChange  
+  strategy:
+    type: Rolling      
+ConfigChange trigger
+
+ImageChange trigger
+
+Default Rolling strategy
+
+Creating a Deployment Configuration
+Deployment configuration consists of:
+
+Replication controller template describing application to be deployed
+
+Default replica count for deployment
+
+Deployment strategy used to execute deployment
+
+Set of triggers that cause deployments to be created automatically
+
+Deployment configuration is deploymentConfig OpenShift Enterprise object
+
+Can be managed with oc command like any other resource
+
+Deployment Configuration Example
+{
+  "kind": "DeploymentConfig",
+  "apiVersion": "v1",
+  "metadata": {
+    "name": "frontend"
+  },
+  "spec": {
+    "template": { 
+      "metadata": {
+        "labels": {
+          "name": "frontend"
+        }
+      },
+      "spec": {
+        "containers": [
+          {
+            "name": "helloworld",
+            "image": "openshift/origin-ruby-sample",
+            "ports": [
+              {
+                "containerPort": 8080,
+                "protocol": "TCP"
+              }
+            ]
+          }
+        ]
+      }
+    }
+    "replicas": 5, 
+    "selector": {
+      "name": "frontend"
+    },
+    "triggers": [
+      {
+        "type": "ConfigChange" 
+      },
+      {
+        "type": "ImageChange", 
+        "imageChangeParams": {
+          "automatic": true,
+          "containerNames": [
+            "helloworld"
+          ],
+          "from": {
+            "kind": "ImageStreamTag",
+            "name": "origin-ruby-sample:latest"
+          }
+        }
+      }
+    ],
+    "strategy": {
+      "type": "Rolling" 
+    }
+  }
+}
+
+Managing Deployments
+To start new deployment manually:
+
+$ oc deploy <deployment_config> --latest
+If deployment is already in progress, message displays and deployment does not start
+
+Viewing Deployments
+To get basic information about recent deployments:
+
+$ oc describe <deployment_config>
+Shows details, including deployment currently running
+
+To get detailed information about deployment configuration and latest deployment:
+
+$ oc describe dc <deployment_config>
+
+Canceling and Retrying a Deployment
+To cancel running or stuck deployment:
+
+$ oc deploy <deployment_config> --cancel
+Cancellation is best-effort operation
+
+May take some time to complete
+
+Possible deployment will complete before cancellation
+
+To retry last failed deployment:
+
+$ oc deploy <deployment_config> --retry
+If last deployment did not fail, message displays and deployment not retried
+
+Retrying deployment restarts deployment; does not create new version
+
+Restarted deployment has same configuration as when it failed
+
+Rolling Back a Deployment
+Rollbacks revert application to previous deployment
+
+Can be performed using REST API or CLI
+
+To roll back to previous deployment:
+
+$ oc rollback <deployment>
+Configuration template is reverted to deployment specified in rollback command
+
+New deployment is started
+
+Image change triggers in deployment configuration are disabled as part of rollback to prevent unwanted deployments soon after rollback completes
+
+To re-enable image change triggers:
+
+$ oc deploy <deployment_config> --enable-triggers
+
+Deployment Configuration Triggers
+Drive creation of new deployment in response to events
+
+Events can be inside or outside OpenShift Enterprise
+
+If no triggers defined, deployment must be started manually
+
+ConfigChange Trigger
+Results in new deployment whenever changes are detected to replication controller template of deployment configuration
+
+If ConfigChange trigger is defined, first deployment is automatically created soon after deployment configuration is created
+
+ConfigChange trigger:
+
+"triggers": [
+  {
+    "type": "ConfigChange"
+  }
+]
+
+ImageChange Trigger
+Results in new deployment whenever value of image stream tag changes
+
+In example below:
+
+When latest tag value of origin-ruby-sample image stream changes
+
+And when new tag value differs from current image specified in helloworld container
+
+Then new deployment is created using new tag value for helloworld container
+
+"triggers": [
+  {
+    "type": "ImageChange",
+    "imageChangeParams": {
+      "automatic": true,
+      "from": {
+        "kind": "ImageStreamTag",
+        "name": "origin-ruby-sample:latest"
+      },
+      "containerNames": [
+        "helloworld"
+      ]
+    }
+  }
+]
+
+Strategies
+Overview
+Deployment configuration declares strategy responsible for executing deployment process
+
+Applications have different requirements for availability and other considerations during deployments
+
+OpenShift Enterprise provides strategies to support variety of deployment scenarios
+
+Rolling strategy is default if deployment configuration does not specify strategy
+
+Rolling Strategy
+Performs rolling update and supports life-cycle hooks for injecting code into deployment process
+
+Rolling strategy:
+
+"strategy": {
+  "type": "Rolling",
+  "rollingParams": {
+    "timeoutSeconds": 120,
+    "pre": {},
+    "post": {}
+  }
+}
+
+Strategies
+
+Rolling strategy:
+
+Executes pre life-cycle hooks
+
+Scales up new deployment by one
+
+Scales down old deployment by one
+
+Repeats scaling until:
+
+New deployment reaches specified replica count
+
+Old deployment is scaled to zero
+
+Executes post life-cycle hooks
+
+During scale up, if replica count of the deployment is greater than one, the first deployment replica is validated for readiness before fully scaling up the deployment. If this validation fails, the deployment fails.
+
+Recreate Strategy
+Has basic rollout behavior and supports life-cycle hooks for injecting code into deployment process
+
+Recreate strategy:
+
+"strategy": {
+  "type": "Recreate",
+  "recreateParams": {
+    "pre": {},
+    "post": {}
+  }
+}
+
+Recreate strategy:
+
+Executes pre life-cycle hooks
+
+Scales down previous deployment to zero
+
+Scales up new deployment
+
+Executes post life-cycle hooks
+
+Custom Strategy
+Lets you define deployment behavior
+
+Example Custom strategy:
+
+"strategy": {
+  "type": "Custom",
+  "customParams": {
+    "image": "organization/strategy", 
+    "command": ["command", "arg1"], 
+    "environment": [
+      {
+        "name": "ENV_1",  
+        "value": "VALUE_1"
+      }
+    ]
+  }
+}
+
+OpenShift Enterprise provides two environment variables for strategy process:
+OPENSHIFT_DEPLOYMENT_NAME - Name of new deployment (replication controller)
+OPENSHIFT_DEPLOYMENT_NAMESPACE - Namespace of new deployment
+
+Life-cycle Hooks
+
+Overview
+Recreate and Rolling strategies support life-cycle hooks
+
+Allow behavior to be injected into deployment process at predefined points
+
+pre life-cycle hook:
+
+"pre": {
+  "failurePolicy": "Abort",
+  "execNewPod": {}
+}
+execNewPod is pod-based life-cycle hook
+
+Every hook has failurePolicy
+
+Failure Policy
+failurePolicy defines action strategy takes when hook fails
+Abort - Abort deployment if if hook fails.
+Retry - Retry hook execution until it succeeds.
+Ignore - Ignore hook failure and proceed with deployment.
+
+Pod-Based Life-cycle Hook
+Hooks have type-specific field that describes how to execute hook
+
+Pod-based hooks are only supported type
+
+Specified in execNewPod field
+
+Pod-based life-cycle hooks execute hook code in new pod derived from deployment configuration template
+
+Simplified Deployment Configuration
+{
+  "kind": "DeploymentConfig",
+  "apiVersion": "v1",
+  "metadata": {
+    "name": "frontend"
+  },
+  "spec": {
+    "template": {
+      "metadata": {
+        "labels": {
+          "name": "frontend"
+        }
+      },
+      "spec": {
+        "containers": [
+          {
+            "name": "helloworld", 
+            "image": "openshift/origin-ruby-sample"
+          }
+        ]
+      }
+    }
+    "replicas": 5,
+    "selector": {
+      "name": "frontend"
+    },
+    "strategy": {
+      "type": "Rolling",
+      "rollingParams": {
+        "pre": {
+          "failurePolicy": "Abort", 
+          "execNewPod": {
+            "containerName": "helloworld", 
+            "command": [
+              "/usr/bin/command", "arg1", "arg2" 
+            ],
+            "env": [ 
+              {
+                "name": "CUSTOM_VAR1",
+                "value": "custom_value1"
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}
+
+Build Triggers
+
+Control circumstances in which buildConfig runs
+
+Two types of triggers:
+Webhooks
+Image change
+
+
+Webhook Triggers
+Trigger new build by sending request to OpenShift Enterprise API endpoint
+
+Define using GitHub webhooks or generic webhooks
+
+Displaying buildConfig Webhook URLs
+To display webhook URLs associated with build configuration:
+
+$ oc describe buildConfig <name>
+If command does not display webhook URLs, then no webhook trigger is defined
+
+GitHub Webhook Triggers
+Handle call made by GitHub when repository is updated
+
+When defining trigger, specify secret value as part of URL supplied to GitHub
+
+Ensures that only you and your repository can trigger build
+
+JSON trigger definition within buildConfig:
+
+{
+  "type": "github",
+  "github": {
+    "secret": "secret101"
+  }
+}
+describe command retrieves GitHub webhook URL structured as follows:
+
+http://<openshift_api_host:port>/osapi/v1/namespaces/<namespace>/buildconfigs/<name>/webhooks/<secret>/github
+
+Generic Webhook Triggers
+Can be invoked from any system that can make web request
+
+Must specify secret value when defining trigger
+
+Caller must provide secret value to trigger build
+
+JSON trigger definition within buildConfig:
+
+{
+  "type": "generic",
+  "generic": {
+    "secret": "secret101"
+  }
+}
+To set up caller, provide calling system with URL of generic webhook endpoint:
+
+http://<openshift_api_host:port>/osapi/v1/namespaces/<namespace>/buildconfigs/<name>/webhooks/<secret>/generic
+
+Image Change Triggers
+Allow your build to be automatically invoked when new upstream image is available
+
+If build based on Red Hat Enterprise Linux image, can trigger build to run any time that image changes
+
+Your application image always runs latest Red Hat Enterprise Linux base image
+
+To configure image change trigger, define ImageStream to point to upstream trigger image:
+
+{
+  "kind": "ImageStream",
+  "apiVersion": "v1",
+  "metadata": {
+    "name": "ruby-20-rhel7"
+  }
+}
+Defines image stream tied to Docker image repository at <system-registry>/<namespace>/ruby-20-rhel7
+
+<system-registry> is defined as service with name docker-registry running in OpenShift Enterprise
+
+To define build with strategy that consumes image stream:
+
+{
+  "strategy": {
+    "type": "Source",
+    "sourceStrategy": {
+      "from": {
+        "kind": "ImageStreamTag",
+        "name": "ruby-20-rhel7:latest"
+      },
+    }
+  }
+}
+sourceStrategy definition consumes latest tag of image stream named ruby-20-rhel7 located in this namespace
+
+Image change trigger:
+
+{
+  "type": "imageChange",
+  "imageChange": {}
+}
+Resulting build :
+
+{
+  "strategy": {
+    "type": "Source",
+    "sourceStrategy": {
+      "from": {
+        "kind": "DockerImage",
+        "name": "172.30.17.3:5001/mynamespace/ruby-20-centos7:immutableid"
+      }
+    }
+  }
+}
+Trigger monitors image stream and tag defined by strategy section’s from field
+
+When change occurs, new build is triggered
+
+Ensures that triggered build uses new image just pushed to repository
+
+Build can be rerun any time with same inputs
+
