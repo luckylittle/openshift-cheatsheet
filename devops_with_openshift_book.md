@@ -49,7 +49,9 @@ oc expose service cotd
 
 ## Create persistent volume
 
+
 ## Create volume claim
+
 
 ## Deployments
 
@@ -71,3 +73,74 @@ oc expose service cotd
 
 ### Blue-Green deployments
 
+```
+oc new-app https://github.com/devops-with-openshift/bluegreen#green --name=green
+
+oc patch route/bluegreen -p '{"spec":{"to":{"name":"green"}}}'
+
+oc patch route/bluegreen -p '{"spec":{"to":{"name":"blue"}}}'
+```
+
+### A/B Deployments
+
+```
+oc annotate route/ab haproxy.router.openshift.io/balance=roundrobin
+
+oc set route-backends ab cats=100 city=0
+
+oc set route-backends ab --adjust city=+10%
+```
+
+### Canary Deployments
+
+### Rollbacks
+
+```
+oc rollback cotd --to-version=1 --dry-run
+
+oc rollback cotd --to-version=1
+
+oc describe dc cotd
+```
+
+
+## Pipelines
+
+### Jenkins template
+
+- Comes with all necessary OpenShift plugins (OpenShift login, OpenShift sync, OpenShift pipeline, Kubernetes)
+
+- Comes with example `Jenkinsfile`
+
+```
+oc get templates -n openshift | grep jenkins-pipeline-example
+
+oc new-app jenkins-ephemeral # to keep the logs when Jenkins container shuts down
+
+oc get pods
+
+oc new-app jenkins-pipeline-example
+
+oc start-build sample-pipeline
+
+oc get pods
+```
+
+- Customizing Jenkins:
+
+```
+vim openshift.local.config/master/master-confi.yaml
+
+jenkinsPipelineConfig:
+  autoProvisionEnabled: true
+  parameters:
+    JENKINS_IMAGE_STREAM_TAG: jenkins-2-rhel7:latest
+    ENABLE_OAUTH: true
+  serviceName: jenkins
+  templateName: jenkins-ephemeral
+  templateNamespace: openshift
+  ```
+  
+  - Good resource for Jenkinsfiles: https://github.com/fabric8io/fabric8-jenkinsfile-library
+  
+  ## Configuration Management
