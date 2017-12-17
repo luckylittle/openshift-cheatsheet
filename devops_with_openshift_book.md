@@ -256,3 +256,167 @@ oc set env dc/nodejs-ex DB_ENV-
     - Identifying metadata consisting of key/value pairs attached to resources
 2. Annotation examples: example.com/skipValidation=true, example.com/MD5checksum-1234ABC, example.com/BUILDDATE=20171217
     - Primarily concerned with attaching non-identifying information, which is used by other clients such as tools or libraries
+
+## OpenShift Builds
+
+### Build strategies
+
+- Source-to-Image (S2I): uses the opensource S2I tool to enable developers to reporducibly build images by layering the application's soure onto a container image
+
+- Docker: using the Dockerfile
+
+- Pipeline: uses Jenkins, developers provide Jenkinsfile containing the requisite build commands
+
+- Custom: allows the developer to provide a customized builder image to build runtime image
+
+### Build sources
+
+- Git
+
+- Dockerfile
+
+- Image
+
+- Binary
+
+### Build Configurations
+
+- contains the details of the chosen build strategy as well as the source
+
+```
+oc new-app https://github.com/openshift/nodejs-ex
+
+oc get bc/nodejs-ex -o yaml
+```
+
+- unless specified otherwise, the `oc new-app` command will scan the supplied Git repo. If it finds a Dockerfile, the Docker build strategy will be used; otherwise source strategy will be used and an S2I builder will be configured
+
+```
+oc new-build openshift/nodejs-010-centos7~https://github.com/openshift/nodejs-ex.git --name='newbuildtest'
+```
+
+### S2I
+
+- Components:
+
+1. Builder image - installation and runtime dependencies for the app
+
+2. S2I script - assemble/run/usage/save-artifacts/test/run
+
+- Process:
+
+1. Start an instance of the builder image
+
+2. Retreive the source artifacts from the specified repository
+
+3. Place the source artifacts as well as the S2I scripts into the builder image (bundle into .tar and stream into builder image)
+
+4. Execute assemble script
+
+5. Commit the image and push to OCP registry
+
+- Customize the build process:
+
+1. Custom S2I scripts - their own assemble/run etc. by placing scripts in .s2i/bin at the base of the source code, can also contain environment file
+
+2. Custom S2I builder - write your own custom builder
+
+#### Adding a New Builder Image
+
+#### Building a Sample Application
+
+#### Troubleshooting
+
+- Adding the --follow flag to the start-build command
+
+- oc get builds
+
+- oc logs build/test-app-3
+
+- oc set env bc/test-app BUILD_LOGLEVEL=5 S2I_DEBUG=true
+
+## Application Management
+
+- Operational layers:
+
+1. Operating system infrastructure operations - compute, network, storage, OS
+
+2. Cluster operations - cluster managemebt OpenShift/Kubernetes
+
+3. Application operations - deployments, telemetry, logging
+
+### Integrated logging
+
+- the EFK (Elasticsearch/Fluentd/Kibana) stack aggregates logs from nodes and application pods
+
+```
+oc cluster up --logging=true
+```
+
+### Simple metrics
+
+- the Kubelet/Heapster/Cassandra and you can use Grafana to build dashboard
+
+```
+oc cluster up --metrics=true
+```
+
+### Resource scheduling
+
+- default behavior:
+
+1. best effor isolation = no primises what resources can be allocated for your project
+
+2. might get defaulted values
+
+3. out of memory killed randomly
+
+4. might get CPU starved (wait to schedule your workload)
+
+### Resource quotas
+
+- hard constraints how much memory/CPU your project can consume
+
+```
+oc login -u developer -p developer
+
+oc new-project development --display-name='Development' --description='Development'
+
+oc login -u system:admin
+
+oc create -n development -f <YAML FILE HERE kind: ResourceQuota>
+
+oc describe quota -n development
+```
+
+### Limit ranges
+
+- mechanism for specifying default project CPU and memory limits and requests
+
+```
+oc get limits -n development
+
+oc describe limits core-resource-limits -n development
+```
+
+### Multiproject quota
+
+- you may use project labels or annotations when creating multiproject spanning quotas
+
+```
+oc login -u system:admin
+
+oc create clusterquota for-user-developer --project-annotation-selector openshift.io/requester=developer --hard pods=8
+
+oc login -u developer -p developer
+
+oc describe AppliedClusterResourceQuota
+```
+
+### Auto scaling of the pod
+
+```
+oc autoscale dc myapp --min 1 --max 4 --cpu-percent=75
+
+oc get hpa myapp
+```
