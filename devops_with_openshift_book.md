@@ -21,6 +21,26 @@
 - OpenShift Container Platform (formerly known as OpenShift Enterprise) is Red Hat's on-premises private platform as a service product, built around a core of application containers powered by Docker, with orchestration and management provided by Kubernetes, on a foundation of Red Hat Enterprise Linux.
 
 ```
+oc whoami
+
+oc status
+
+oc get all
+
+oc describe RESOURCE RESOURCE_NAME
+
+oc export
+
+oc create
+
+oc edit
+
+oc exec POD_NAME <options> <command>
+
+oc rsh POD_NAME <options>
+
+oc delete RESOURCE_TYPE name
+
 oc version
 
 docker version
@@ -35,6 +55,8 @@ oc cluster up \
   --host-data-dir=... \
   --host-config-dir=... \
   --use-existing-config
+
+oc logout
 ```
 
 ```
