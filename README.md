@@ -16,16 +16,16 @@ Labs from the OpenTLC training:
   `Labs_Module08.pdf`
 
 MiniShift CLI:
-- minishift.txt
+- `minishift.txt`
 
 Example of the MySQL service (svc) configuration file:
-- mysql-svc.yml
+- `mysql-svc.yml`
 
 OpenShift Client options:
-- oc_options.txt
+- `oc_options.txt`
 
 OpenShift Client types:
-- oc_types.txt
+- `oc_types.txt`
 
 Notes from the OPEN (Red Hat Online Partner Enablement Network) training:
-- red_hat_openshift_notes.txt
+- `red_hat_openshift_notes.txt`
