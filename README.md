@@ -29,3 +29,7 @@ OpenShift Client types:
 
 Notes from the OPEN (Red Hat Online Partner Enablement Network) training:
 - `red_hat_openshift_notes.txt`
+
+# Contributors
+
+Lucian Maly <<lucian@redhat.com>>
