@@ -149,6 +149,19 @@ Troubleshooting three-tier app (`HTTP/1.1 500 Internal Server Error` when `curl`
 - For a builder pod, you define environment variables using the `--build-env` option of the `oc new-app` command.
 - Deployment configuration (`dc`) stores environment variables for application pods, while a build configuration (`bc`) stores environment variables for builder pods.
 
+# Designing containerized apps for Openshift
+
+- Preferred way to build images is S2I.
+- OpenShift provides the s2i command-line tool that helps you bootstrap the build environment for creating custom S2I builder images. It is available in the source-to-image package from the RHSCL Yum repositories (rhel-server-rhscl-7-eus-rpms).
+
+## Building Container Images with Advanced Dockerfile Instructions
+
+- Each `RUN` in `Dockerfile` creates a new layer. It is recommended to use `&&` on each line to create one long command and thus one layer.
+- Openshift uses lots of `LABEL` instructions (`io.openshift.tags`, `io.k8s.description`, `io.openshift.expose-services`).
+- When building images for Openshift, the namespace should be set to `io.openshift`.
+- `WORKDIR` should be absolute path.
+- It is a good practice to use `ENV` instruction(s) to define file and folder path(s) instead of hard-coding it. It is recommended to use one `ENV` and `\` on each line to only create one layer.
+- `USER`
 
 ---
 *Last updated: Tue Dec 11 14:16:23 AEDT 2018 (notes from DO288-OCP3.6-en-1-20180130-ROLE.pdf)*
