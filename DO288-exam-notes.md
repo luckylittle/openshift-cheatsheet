@@ -172,18 +172,51 @@ Troubleshooting three-tier app (`HTTP/1.1 500 Internal Server Error` when `curl`
 - Directories and files that are read from or written to by processes in the container should be owned by the **root** group and have group read or group write permission (`RUN chgrp -R 0 <directory> && chmod -R g=u <directory>`).
 - Files that are executable should have group execute permissions.
 - The processes running in the container must **not** listen on privileged ports (that is, ports below 1024), because they are not running as privileged users.
+- Example of the above:
+
+```Dockerfile
+# Use the do288/httpd-parent image as base
+FROM registry.lab.example.com:5000/do288/httpd-parent
+
+# Change the port to 8080
+EXPOSE 8080
+
+# Override the LABEL from parent
+LABEL io.openshift.expose-services="8080:http"
+
+# Change web server port to 8080
+RUN sed -i "s/listen 80/listen 8080/g" /etc/nginx.conf
+
+# Permission to allow container to run on Openshift
+RUN chgrp -R 0 /var/opt/rh/rh-nginx18 && chmod -R g=u /var/opt/rh/rh-nginx18
+
+# Run as a non-privileged user, Red Hat recommends this
+USER 1001
+```
 
 ### Running Containers as root Using Security Context Constraints (SCC)
 
 - All containers created by OpenShift use the SCC named **restricted** by default, which ignores the userid set by the container image, and assigns a random userid to containers. You need `anyuid` SCC to allow containers run as root.
 - All pods from a project run under a default service account, unless the pod, or its deployment configuration, is configured otherwise.
-- allow containers to run as the root user in an OpenShift project:
+- Allow containers to run as the root user in an OpenShift project (**not** recommended):
 
-```
+```bash
 oc create serviceaccount <myserviceaccount>
 oc patch dc/demo-app --patch '{"spec":{"template":{"spec":{"serviceAccountName": "<myserviceaccount>"}}}}'
+   OR oc edic dc/demo-app and add serviceAccountName attribute to the spec>template>spec section (below terminationGracePeriodSeconds)
 oc adm policy add-scc-to-user anyuid -z <myserviceaccount>
 ```
 
+## Injecting Configuration Data into an Application
+
+- The recommended approach for containerized applications is to decouple the static application binaries from the dynamic configuration data and to externalize the configuration. This ensures the portability of applications across many environments.
+- Secrets and configuration maps must be created **before** creating the pods that depend on them.
+
+```bash
+oc create configmap config_map_name \
+--from-literal key1=value1 \
+--from-literal key2=value2
+```
+
 ---
-*Last updated: Mon Feb 04 11:00:00 AEDT 2019 (notes from DO288-OCP3.6-en-1-20180130-ROLE.pdf, Progress 20.3% = page 80 of 394)*
+*Last updated: Mon Feb 04 17:00:00 AEDT 2019 (notes from DO288-OCP3.6-en-1-20180130-ROLE.pdf, Progress 23.9% = page 95 of 394)*
