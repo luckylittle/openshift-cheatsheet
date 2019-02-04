@@ -95,11 +95,11 @@ oc describe is echo
 
 ## Managing Applications with the Web Console
 
-- The logs from a deployment are not stored by OpenShift unless there were errors during deployment.
+- The logs from a deployment are **not** stored by OpenShift unless there were errors during deployment.
 - Default OpenShift router implements session affinity (if you have multiple pods and you go to the router's URL and keep refreshing, you will be routed to the same pod every time).
-- If the application source code repository is not configured to use OpenShift web hooks, you need to use either the web console or the CLI to trigger new builds, after pushing updates to the application source code.
+- If the application source code repository is **not** configured to use OpenShift web hooks, you need to use either the web console or the CLI to trigger new builds, after pushing updates to the application source code.
 - The details page for a deployment also provides the Deploy button, which performs the same function as the `oc rollout latest` command. You need to use the CLI to perform other `oc rollout` operations.
-- Deleting a project deletes all resources inside the project.
+- Deleting a project deletes **all** resources inside the project.
 
 ## Managing Applications with the CLI
 
@@ -142,17 +142,19 @@ Troubleshooting three-tier app (`HTTP/1.1 500 Internal Server Error` when `curl`
 4. Verify that the application pod can reach the database pod: `oc rsh api-1-abcde bash -c 'curl $DATABASE_SERVICE_NAME:3306'`.
 5. Review application logs: `oc logs api-1-abcde`.
 
-
 ## Build and Deployment Environment Variables
 
 - Add the `-e` option to the `oc new-app` command to provide values for environment variables. These values are stored in the deployment configuration and added to all pods created by a deployment.
 - For a builder pod, you define environment variables using the `--build-env` option of the `oc new-app` command.
 - Deployment configuration (`dc`) stores environment variables for application pods, while a build configuration (`bc`) stores environment variables for builder pods.
 
+
 # Designing containerized apps for Openshift
 
 - Preferred way to build images is S2I.
-- OpenShift provides the s2i command-line tool that helps you bootstrap the build environment for creating custom S2I builder images. It is available in the source-to-image package from the RHSCL Yum repositories (rhel-server-rhscl-7-eus-rpms).
+- OpenShift provides the s2i command-line tool that helps you bootstrap the build environment for creating custom S2I builder images. It is available in the source-to-image package from the Red Hat Software Collections RHSCL Yum repositories (rhel-server-rhscl-7-eus-rpms).
+- Red Hat recommends to run the image as a non-root user for security reasons.
+- OpenShift, by default, does **not** honor the `USER` instruction set by the container image. For security reasons, a random userid other than the root userid (0) is used by OpenShift to run containers.
 
 ## Building Container Images with Advanced Dockerfile Instructions
 
@@ -161,7 +163,27 @@ Troubleshooting three-tier app (`HTTP/1.1 500 Internal Server Error` when `curl`
 - When building images for Openshift, the namespace should be set to `io.openshift`.
 - `WORKDIR` should be absolute path.
 - It is a good practice to use `ENV` instruction(s) to define file and folder path(s) instead of hard-coding it. It is recommended to use one `ENV` and `\` on each line to only create one layer.
-- `USER`
+- `USER` sets the user name (or UID) and optionally the user group (or GID) to use when running the image and for any `RUN`, `CMD`, and `ENTRYPOINT` instructions that follow it in the Dockerfile.
+- `VOLUME` - mountpoint inside the container, used for persistent data, content is preserved even if the container is restarted or moved to a different node.
+- `ONBUILD` instruction registers triggers in the container image, declare instructions to be executed only when building a child image. Useful when you have image that everyone in the organization uses and build child images from it. The **parent** Dockerfile has `ONBUILD` instructions in this case and when the build process of the **child** image starts, it triggers the execution of the `ONBUILD` instructions in the **parent** image.
+
+### Adapting `Dockerfile`s for Openshift
+
+- Directories and files that are read from or written to by processes in the container should be owned by the **root** group and have group read or group write permission (`RUN chgrp -R 0 <directory> && chmod -R g=u <directory>`).
+- Files that are executable should have group execute permissions.
+- The processes running in the container must **not** listen on privileged ports (that is, ports below 1024), because they are not running as privileged users.
+
+### Running Containers as root Using Security Context Constraints (SCC)
+
+- All containers created by OpenShift use the SCC named **restricted** by default, which ignores the userid set by the container image, and assigns a random userid to containers. You need `anyuid` SCC to allow containers run as root.
+- All pods from a project run under a default service account, unless the pod, or its deployment configuration, is configured otherwise.
+- allow containers to run as the root user in an OpenShift project:
+
+```
+oc create serviceaccount <myserviceaccount>
+oc patch dc/demo-app --patch '{"spec":{"template":{"spec":{"serviceAccountName": "<myserviceaccount>"}}}}'
+oc adm policy add-scc-to-user anyuid -z <myserviceaccount>
+```
 
 ---
-*Last updated: Tue Dec 11 14:16:23 AEDT 2018 (notes from DO288-OCP3.6-en-1-20180130-ROLE.pdf)*
+*Last updated: Mon Feb 04 11:00:00 AEDT 2019 (notes from DO288-OCP3.6-en-1-20180130-ROLE.pdf, Progress 20.3% = page 80 of 394)*
