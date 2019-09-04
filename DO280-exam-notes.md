@@ -1,8 +1,8 @@
-# Red Hat OpenShift Admin I (3.9) DO280/EX280
+# Red Hat OpenShift Admin I (v3.9) DO280/EX280
 
 ## Installation - Ansible inventory file & vars
 
-```none
+```ini
 [workstations]
 [nfs]
 [masters]
@@ -250,3 +250,133 @@ oc get pvc
 ```
 
 ## Controlling scheduling & scaling
+
+```bash
+# Scaling:
+oc new-app -o yaml -i php:7.0 http://registry.lab.example.com/scaling > scaling.yml
+oc describe dc <scaling> | grep 'Replicas'
+oc scale --replicas=5 dc <scaling>
+```
+
+```bash
+oc get nodes -L region
+oc label node <node2.lab.example.com> region=<apps> --overwrite
+oc get dc/hello -o yaml > <hello.yml>
+```
+
+`hello.yml`
+
+```yaml
+nodeSelector:
+  region: apps
+```
+
+`oc apply -f <hello.yml>`
+`oc label node node1.lab.example.com region=apps --overwrite`
+
+### Disable scheduling on node2
+
+`oc adm manage-nmode --schedulable=false <node2.lab.example.com>`
+
+### Delete/drain all pods on node2
+
+`oc adm drain <node2.lab.example.com> --delete-local-data`
+
+### Load Docker image locally
+
+`docker load -i <phpmyadmin-latest.tar>`
+
+### Tag local image ID
+
+`docker tag <123abcdef> <docker-registry-default.apps.lab.example.com/phpmyadmin:4>`
+`docker images`
+
+### Login to OpenShift internal image registry
+
+`TOKEN=$(oc whoami -t)`
+
+```bash
+docker login -n developer -p ${TOKEN} docker-registry-default.apps.lab.example.com
+
+# Certificate signed by unknown authority:
+scp registry.crt root@master:/etc/origin/master/registry.crt
+/etc/pki/ca-trust/source/anchors/docker-registry-default.apps.lab.example.com.crt
+update-ca-trust
+systemctl restart docker
+<<RUN DOCKER LOGIN AGAIN>>>
+```
+
+## Metrics subsystem
+
+### Verify images required by metrics
+
+`docker-registry-cli <registry.lab.example.com> search <metrics-cassandra> ssl`
+
+```bash
+# Output:
+openshift3/ose-metrics-hawkular-metrics:v3.9
+openshift3/ose-metrics-heapster:v3.9
+openshift3/ose-metrics-cassandra:v3.9
+openshift3/ose-metrics-recycler:v3.9
+```
+
+### Check NFS
+
+`ssh root@services cat /etc/exports.d/openshift-ansible.exports`
+
+### Create PV for NFS share
+
+`cat metrics-pv.yml`
+
+```yaml
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: metrics
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteOnce                               # Must have this!
+  nfs:
+    path: /exports/metrics
+    server: services.lab.example.com
+  persistenVolumeReclaimPolicy: Recycle
+```
+
+`oc get pv`
+
+### Add to Ansible inventory file
+
+```ini
+[OSEv3:vars]
+  openshift_metrics_install_metrics               # true
+  openshift_metrics_image_prefix                  # registry.lab.example.com/openshift3/ose-
+  openshift_metrics_image_version                 # v3.9
+  openshift_metrics_heapster_request_memory       # 300M
+  openshift_metrics_hawkular_request_memory       # 750M
+  openshift_metrics_cassandra_request_memory      # 750M
+  openshift_metrics_cassandra_storage_type        # pv
+  openshift_metrics_cassandra_pvc_size            # 5Gi
+  openshift_metrics_cassandra_pvc_prefix          # metrics
+```
+
+### Run Ansible, verify if it's OK
+
+```bash
+oc get pvc -n openshift-infra
+oc get pod -n openshift-infra
+oc adm diagnostics MetricsApiProxy
+```
+
+### Top command as admin
+
+`oc adm top node --heapster-namespace=openshift-infra --heapster-scheme=https`
+
+
+
+## Limits
+
+```bash
+
+```
