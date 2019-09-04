@@ -1,6 +1,6 @@
 # Red Hat OpenShift Admin I (v3.9) DO280/EX280
 
-## Installation - Ansible inventory file & vars
+## 1. Installation - Ansible inventory file & vars
 
 ```ini
 [workstations]
@@ -65,7 +65,7 @@
   openshift_metrics_install_metrics               # true
 ```
 
-## Installation process
+## 2. Installation process
 
 ```bash
 sudo yum install atomic-openshift-utils
@@ -75,7 +75,7 @@ ansible-playbook /usr/share/ansible/openshift-ansible/playbooks/prerequisites.ym
 ansible-playbook /usr/share/ansible/openshift-ansible/playbooks/deplpoy_cluster.yml
 ```
 
-## Post-installation process
+## 3. Post-installation process
 
 ```bash
 oc login -u <USER> -p <PASSWORD> --insecure-skip-tls-verify=true
@@ -86,7 +86,7 @@ oc adm policy add-cluster-role-to-user cluster-admin <USER>
 oc explain
 ```
 
-## Creating a route
+## 4. Creating a route
 
 ### a/ Generate private key
 
@@ -124,7 +124,7 @@ oc edit svc hello-openshift
 oc edit route hello-openshift
 ```
 
-## ImageStreams
+## 5. ImageStreams
 
 ```bash
 oc new-app --name=hello -i php:5.4 \              # -i = imagestream
@@ -139,13 +139,13 @@ ssh root@node1 systemctl status docker
 oc describe is
 ```
 
-## Common problems
+## 6. Common problems
 
 ```bash
 oc delete all -l app=<node-hello>
 oc get all
 oc describe pod <hello-1-deploy>
-oc get events --sort-by='.metadata.creation Timestamp'
+oc get events --sort-by='.metadata.creationTimestamp'
 oc get dc <hello> -o yaml
 sudo vi /etc/sysconfig/docker
 oc rollout latest hellp
@@ -154,7 +154,7 @@ pc expose service --hostname=hello.apps.lab.example.com <node-hello>
 oc debug pod <PODNAME>
 ```
 
-## Secrets
+## 7. Secrets
 
 ```bash
 oc create secret generic <mysql> --from-literal='database-user'='mysql' \
@@ -165,7 +165,7 @@ oc new-app --file=mysql.yml
 oc port-forward <pod> <local>:<on the pod>        # oc port-forward mysql-1-abcd 3306:3306
 ```
 
-## User accounts, access
+## 8. User accounts, access
 
 `ssh root@master htpasswd /etc/origin/master/htpasswd <USER>`
 
@@ -219,7 +219,7 @@ JSON representation of the above:
 }
 ```
 
-## Persistent volume
+## 9. Persistent volume
 
 `cat mysqldb-volume.yml`
 
@@ -249,7 +249,7 @@ oc set volume dc/<mysqldb> --add --overwrite --name=<mysqldb-volume-1> -t pvc --
 oc get pvc
 ```
 
-## Controlling scheduling & scaling
+## 10. Controlling scheduling & scaling
 
 ```bash
 # Scaling:
@@ -306,7 +306,7 @@ systemctl restart docker
 <<RUN DOCKER LOGIN AGAIN>>>
 ```
 
-## Metrics subsystem
+## 11. Metrics subsystem
 
 ### Verify images required by metrics
 
@@ -373,10 +373,158 @@ oc adm diagnostics MetricsApiProxy
 
 `oc adm top node --heapster-namespace=openshift-infra --heapster-scheme=https`
 
-
-
-## Limits
+## 12. Limits
 
 ```bash
+oc describe node <node1.lab.example.com>
+oc describe node <node2.lab.example.com>
+# Look for allocated resources (| grep -A 4 Allocated)
+# After you deploy new app, allocated resources do NOT change
+```
+
+`cat limits.yml`
+
+```yaml
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: project-limits
+spec:
+  limits:
+    - type: container
+      default:
+        cpu: 250m
+```
+
+`oc describe limits`
+
+`cat quota.yml`
+
+```yaml
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: project-quota
+spec:
+  hard:
+    cpu: 900m
+```
+
+```bash
+# Same as:
+oc quota project-quota --hard=cpu=900m
+oc describe quota
+# After you deploy an app, it will consume the project quota
+```
+
+```bash
+oc describe pod <hello-1-abcdef> | grep -A 2 Requests
+# When you scal up and get over the quota, resources will not be created
+oc get resourcequota --list-all-quotas
+oc get events | grep -i error
+oc set resources dc hello --requests=memory=256Mi
+# Memory request is not counted against the project quota
+```
+
+## 13. Readiness/liveness
+
+```bash
+oc status
+curl http://probe.apps.lab.example.com/health
+curl http://probe.apps.lab.example.com/ready
+<<CREATE PROBES IN WEB GUI>>
+oc get events --sort-by='.metadata.CreationTimestamp' | grep 'probe failed'
+```
+
+## 14. FAQs
+
+### Import the template into OpenShift
+
+`oc apply -n openshift -f <template.yml>`
+
+### Import the Docker image to OpenShift
+
+`oc import-image <stream> --from=registry.lab.example.com/todoapp/todoui --confirm -n <todoapp>`
+
+### Turn service into NodePort
+
+`oc edit svc <hello>`
+
+```yaml
+. . .
+  ports:
+    - name: 8080-tcp
+      . . .
+      nodePort: 30800
+  type: NodePort
+. . .
+```
+
+### Access shell inside the pod
+
+`oc rsh <hello-1-abcdef>`
+
+### Export resource to YAML
+
+```bash
+oc export pod <hello-1-abcdef> > pod.yml
+# As template:
+oc export svc,dc hello --as-template=docker-hello > template.yml
+```
+
+### Configure router to handle wildcard routes
+
+```bash
+oc scale dc/router --replicas=0
+oc set env dc/router ROUTER_ALLOW_WILDCARD_ROUTES=true
+oc scale dc/router --replicas=3
+oc expose svc test --wildcard-policy-subdomain --hostname='www.lab.example.com'
+```
+
+### Autocomplete
+
+`source /etc/bash_completion.d/oc`
+
+
+### Troubleshooting policies
+
+```bash
+oc describe clusterPolicyBindings :default
+oc describe policyBindings :default
+```
+
+### Security Context Constraints (SCCs)
+
+```bash
+oc get scc
+oc create serviceaccount <account>
+```
+
+```none
+# SCCs:
+- anyuid
+- hostaccess
+- hostmount-anyuid
+- nouroot
+- privileged
+- restricted
+```
+
+```none
 
 ```
+
+### ConfigMap
+
+`oc create configmap <special-config> --from-literal=serverAddress=172.20.30.40`
+
+### RBAC table
+
+| Name of the role | Permissions |
+|------------------|-------------|
+|cluster-admin     |superuser    |
+|cluster-status    |read-only    |
+|edit              |no admin, no quota, no access mgmt |
+|basic-user        |read account |
+|self-provisioner  |cluster role to create new project(s) |
+|admin             |anything     |
