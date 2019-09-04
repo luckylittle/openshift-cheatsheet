@@ -169,14 +169,14 @@ oc port-forward <pod> <local>:<on the pod>        # oc port-forward mysql-1-abcd
 
 `ssh root@master htpasswd /etc/origin/master/htpasswd <USER>`
 
-### Remove capability to create projects for all regular users
+### a/ Remove capability to create projects for all regular users
 
 ```bash
 oc login -u <admin> -p <redhat> <master>
 oc adm policy remove-cluster-role-from-group self-provisioner system:authenticated system:authenticated:oauth
 ```
 
-### Associate user with secure project
+### b/ Associate user with secure project
 
 ```bash
 oc login -u <admin> -p <redhat>
@@ -186,11 +186,11 @@ oc policy add-role-to-user edit <user>
 oc policy add-role-to-user edit <user> -n <secure># you don't have to do this, if you switched to the namespace already
 ```
 
-### Pass environment variable to the new app
+### c/ Pass environment variable to the new app
 
 `oc new-app --name=phpmyadmin --docker-image=registry.lab.example.com/phpmyadmin:4.7 -e PMA_HOST=mysql.secure-review.svc.cluster.local`
 
-### Failed deployment because of the default security
+### d/ Failed deployment because of the default security
 
 Enable container to run with root privileges:
 
@@ -200,7 +200,7 @@ oc create serviceaccount <phpmyadmin-account>
 oc adm policy add-scc-to-user anyuid -z <phpmyadmin-account>
 ```
 
-### Use & update deployment with the new service account
+### e/ Use & update deployment with the new service account
 
 `oc edit dc/phpmyadmin`                           # or this command:
 `oc patch dc/phpmyadmin --patch '{"spec":{"template":{"spec":{"serviceAccountName":"<phpmyadmin-account>"}}}}'`
@@ -289,24 +289,24 @@ nodeSelector:
 `oc apply -f <hello.yml>`
 `oc label node node1.lab.example.com region=apps --overwrite`
 
-### Disable scheduling on node2
+### a/ Disable scheduling on node2
 
 `oc adm manage-nmode --schedulable=false <node2.lab.example.com>`
 
-### Delete/drain all pods on node2
+### b/ Delete/drain all pods on node2
 
 `oc adm drain <node2.lab.example.com> --delete-local-data`
 
-### Load Docker image locally
+### c/ Load Docker image locally
 
 `docker load -i <phpmyadmin-latest.tar>`
 
-### Tag local image ID
+### d/ Tag local image ID
 
 `docker tag <123abcdef> <docker-registry-default.apps.lab.example.com/phpmyadmin:4>`
 `docker images`
 
-### Login to OpenShift internal image registry
+### e/ Login to OpenShift internal image registry
 
 `TOKEN=$(oc whoami -t)`
 
@@ -323,7 +323,7 @@ systemctl restart docker
 
 ## 11. Metrics subsystem
 
-### Verify images required by metrics
+### a/ Verify images required by metrics
 
 `docker-registry-cli <registry.lab.example.com> search <metrics-cassandra> ssl`
 
@@ -335,11 +335,11 @@ openshift3/ose-metrics-cassandra:v3.9
 openshift3/ose-metrics-recycler:v3.9
 ```
 
-### Check NFS
+### b/ Check NFS
 
 `ssh root@services cat /etc/exports.d/openshift-ansible.exports`
 
-### Create PV for NFS share
+### c/ Create PV for NFS share
 
 `cat metrics-pv.yml`
 
@@ -361,7 +361,7 @@ spec:
 
 `oc get pv`
 
-### Add to Ansible inventory file
+### d/ Add to Ansible inventory file
 
 ```ini
 [OSEv3:vars]
@@ -376,7 +376,7 @@ spec:
   openshift_metrics_cassandra_pvc_prefix          # metrics
 ```
 
-### Run Ansible, verify if it's OK
+### e/ Run Ansible, verify if it's OK
 
 ```bash
 oc get pvc -n openshift-infra
@@ -384,7 +384,7 @@ oc get pod -n openshift-infra
 oc adm diagnostics MetricsApiProxy
 ```
 
-### Top command as admin
+### f/ Top command as admin
 
 `oc adm top node --heapster-namespace=openshift-infra --heapster-scheme=https`
 
