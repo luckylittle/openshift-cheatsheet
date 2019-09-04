@@ -55,5 +55,198 @@
   openshift_docker_additional_registries          # registry.lab.example.com
   openshift_docker_blocked_registries             # registry.lab.example.com,docker.io
   # image prefixes
-
+  openshift_web_console_prefix                    # registry.lab.example.com/openshift3/ose-
+  openshift_cockpit_deployer_prefix               # 'registry.lab.example.com/openshift3'
+  openshift_service_catalog_image_prefix          # registry.lab.example.com/openshift3/ose-
+  openshift_service_broker_prefix                 # registry.lab.example.com/openshift3/ose-
+  openshift_service_broker_image_prefix           # registry.lab.example.com/openshift3/ose-
+  openshift_service_broker_etcd_image_prefix      # registry.lab.example.com/rhel7
+  # metrics
+  openshift_metrics_install_metrics               # true
 ```
+
+## Installation process
+
+```bash
+sudo yum install atomic-openshift-utils
+# Prerequisites - FROM THE DIR WITH 'ansible.cfg'!
+ansible-playbook /usr/share/ansible/openshift-ansible/playbooks/prerequisites.yml
+# Deploy - FROM THE DIR WITH 'ansible.cfg'!
+ansible-playbook /usr/share/ansible/openshift-ansible/playbooks/deplpoy_cluster.yml
+```
+
+## Post-installation process
+
+```bash
+oc login -u <USER> -p <PASSWORD> --insecure-skip-tls-verify=true
+oc get nodes --show labels
+ssh master.lab.example.com
+sudo -i
+oc adm policy add-cluster-role-to-user cluster-admin <USER>
+oc explain
+```
+
+## Creating a route
+
+### a/ Generate private key
+
+`openssl genrsa -out <hello.apps.lab.example.com.key> 2048`
+
+### b/ Generate CSR (request)
+
+```bash
+openssl req -new -key <hello.apps.lab.example.com.key> -out <hello.apps.lab.example.com.csr> \
+  -subj "/C=US/ST=NC/L=Raileigh/O=RedHat/OU=RH/CN=hello.apps.lab.example.com"
+```
+
+### c/ Generate certificate
+
+```bash
+openssl x509 -req -days 365 -in <hello.apps.lab.example.com.csr> -signkey <hello.apps.lab.example.com.key> \
+  -out <hello.apps.lab.example.com.crt>
+```
+
+### d/ Create secure edge-terminated route
+
+```bash
+oc create route edge --service=hello --hostname=hello.apps.lab.example.com --key=hello.apps.lab.example.com \
+  --cert=hello.apps.lab.example.com.crt
+oc types
+oc get routes
+oc get route/hello -o yaml
+oc get pods -o wide
+ssh node1 curl -vvv http://<IP>:8080              # IP from the previous command
+
+# Troubleshooting:
+oc describe svc hello-openshift [-n <NAMESPACE>]
+oc describe pod <hello-openshift-1-abcd>
+oc edit svc hello-openshift
+oc edit route hello-openshift
+```
+
+## ImageStreams
+
+```bash
+oc new-app --name=hello -i php:5.4 \              # -i = imagestream
+  http://services/lab/example.com/php-helloworld  # git repository
+oc describe is php -n openshift
+oc get pods -o wide
+oc logs hello-1-build
+oc get events
+ssh root@master oc get nodes
+ssh root@node1 systemctl status atomic-openshift-node
+ssh root@node1 systemctl status docker
+oc describe is
+```
+
+## Common problems
+
+```bash
+oc delete all -l app=<node-hello>
+oc get all
+oc describe pod <hello-1-deploy>
+oc get events --sort-by='.metadata.creation Timestamp'
+oc get dc <hello> -o yaml
+sudo vi /etc/sysconfig/docker
+oc rollout latest hellp
+oc logs <hello-2-abcd>
+pc expose service --hostname=hello.apps.lab.example.com <node-hello>
+oc debug pod <PODNAME>
+```
+
+## Secrets
+
+```bash
+oc create secret generic <mysql> --from-literal='database-user'='mysql' \
+  --from-literal='database-password'='r3dh4t'
+  --from-literal='database-root-password'='redhat'
+oc get secret <mysql> -o yaml
+oc new-app --file=mysql.yml
+oc port-forward <pod> <local>:<on the pod>        # oc port-forward mysql-1-abcd 3306:3306
+```
+
+## User accounts, access
+
+`ssh root@master htpasswd /etc/origin/master/htpasswd <USER>`
+
+### Remove capability to create projects for all regular users
+
+```bash
+oc login -u <admin> -p <redhat> <master>
+oc adm policy remove-cluster-role-from-group self-provisioner system:authenticated system:authenticated:oauth
+```
+
+### Associate user with secure project
+
+```bash
+oc login -u <admin> -p <redhat>
+oc new-project <secure>
+oc project <secure>                               # you don't have to do this, if you then specify -n (last command)
+oc policy add-role-to-user edit <user>
+oc policy add-role-to-user edit <user> -n <secure># you don't have to do this, if you switched to the namespace already
+```
+
+### Pass environment variable to the new app
+
+`oc new-app --name=phpmyadmin --docker-image=registry.lab.example.com/phpmyadmin:4.7 -e PMA_HOST=mysql.secure-review.svc.cluster.local`
+
+### Failed deployment because of the default security
+
+Enable container to run with root privileges:
+
+```bash
+oc login -u <admin> -p <redhat>
+oc create serviceaccount <phpmyadmin-account>
+oc adm policy add-scc-to-user anyuid -z <phpmyadmin-account>
+```
+
+### Use & update deployment with the new service account
+
+`oc edit dc/phpmyadmin`                           # or this command:
+`oc patch dc/phpmyadmin --patch '{"spec":{"template":{"spec":{"serviceAccountName":"<phpmyadmin-account>"}}}}'`
+
+JSON representation of the above:
+
+```json
+{
+  "spec": {
+    "template": {
+      "spec": {
+        "serviceAccountName": "<phpmyadmin-account>"
+      }
+    }
+  }
+}
+```
+
+## Persistent volume
+
+`cat mysqldb-volume.yml`
+
+```yaml
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: mysqldb-volume
+spec:
+  capacity:
+    storage: 3Gi
+  accessModes:
+    - ReadWriteMany
+  nfs:
+    path: /var/export/dbvol
+    server: services.lab.example.com
+  persistentVolumeReclaimPolicy: Recycle
+```
+
+```bash
+oc create -f <mysqldb-volume.yml>
+oc get pv
+oc status -v
+oc describe pod <mysqldb>
+oc set volume dc/<mysqldb> --add --overwrite --name=<mysqldb-volume-1> -t pvc --claim-name=<mysqldb-pvclaim> \
+  --claim-size=<3Gi> --claim-mode=<'ReadWriteMany'>
+oc get pvc
+```
+
+## Controlling scheduling & scaling
