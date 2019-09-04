@@ -249,6 +249,21 @@ oc set volume dc/<mysqldb> --add --overwrite --name=<mysqldb-volume-1> -t pvc --
 oc get pvc
 ```
 
+```none
+# Important knowledge about PV/PVC:
+  - PV doesn't have a namespace
+  - Allocated capacity of PVC may be bigger than requested capacity, imagine a scenario:
+    1. Create 'review-pv' PV of 3Gi
+    2. Create a new app from template with PVC called 'mysql-pvc' of 1Gi with 'review-pv' selector (step 1.)
+    3. In the template, there is "container" in the "DeploymentConfig" using "volumeMounts" with the name of
+       'mysql-data' mounting it to '/var/lib/mysql/data'
+    4. In the template, there is "volumes" object 'mysql-data' using "persistenVolumeClaim" with "claimName" of mysql-pvc
+    - What happens is following:
+      - 'mysql-pvc' is bound to volume 'review-pv'
+      - it has requested capacity of 1GiB, but allocated 3GiB
+      - if the selector in PVC is not specified, it will automatically find the closest one
+```
+
 ## 10. Controlling scheduling & scaling
 
 ```bash
@@ -436,17 +451,36 @@ curl http://probe.apps.lab.example.com/ready
 oc get events --sort-by='.metadata.CreationTimestamp' | grep 'probe failed'
 ```
 
+```yaml
+readinessProbe:
+  httpGet:                                        # TCP Socket
+    path: /health
+    port: 8888
+  initialDelaySeconds: 15
+  timeoutSeconds: 1
+```
+
+```yaml
+livenessProbe:
+  exec:
+    command:
+      - cat
+      - /tmp/health
+  initialDelaySeconds: 15
+  timeoutSeconds: 1
+```
+
 ## 14. FAQs
 
-### Import the template into OpenShift
+### a/ Import the template into OpenShift
 
 `oc apply -n openshift -f <template.yml>`
 
-### Import the Docker image to OpenShift
+### b/ Import the Docker image to OpenShift
 
 `oc import-image <stream> --from=registry.lab.example.com/todoapp/todoui --confirm -n <todoapp>`
 
-### Turn service into NodePort
+### c/ Turn service into NodePort
 
 `oc edit svc <hello>`
 
@@ -460,11 +494,11 @@ oc get events --sort-by='.metadata.CreationTimestamp' | grep 'probe failed'
 . . .
 ```
 
-### Access shell inside the pod
+### d/ Access shell inside the pod
 
 `oc rsh <hello-1-abcdef>`
 
-### Export resource to YAML
+### e/ Export resource to YAML
 
 ```bash
 oc export pod <hello-1-abcdef> > pod.yml
@@ -472,7 +506,7 @@ oc export pod <hello-1-abcdef> > pod.yml
 oc export svc,dc hello --as-template=docker-hello > template.yml
 ```
 
-### Configure router to handle wildcard routes
+### f/ Configure router to handle wildcard routes
 
 ```bash
 oc scale dc/router --replicas=0
@@ -481,19 +515,18 @@ oc scale dc/router --replicas=3
 oc expose svc test --wildcard-policy-subdomain --hostname='www.lab.example.com'
 ```
 
-### Autocomplete
+### g/ Autocomplete
 
 `source /etc/bash_completion.d/oc`
 
-
-### Troubleshooting policies
+### h/ Troubleshooting policies
 
 ```bash
 oc describe clusterPolicyBindings :default
 oc describe policyBindings :default
 ```
 
-### Security Context Constraints (SCCs)
+### i/ Security Context Constraints (SCCs)
 
 ```bash
 oc get scc
@@ -511,14 +544,28 @@ oc create serviceaccount <account>
 ```
 
 ```none
-
+# Default SELinux policies do not allow containers to access NFS shares!
+setsebool -p virt_use_nfs=true
+setsebool -p virt_sandbox_use_nfs=true
 ```
 
-### ConfigMap
+### j/ ConfigMap
 
 `oc create configmap <special-config> --from-literal=serverAddress=172.20.30.40`
 
-### RBAC table
+```none
+# ConfigMaps:
+  --from-literal=KEY=VALUE
+  --from-file=directory/file
+  --from-file=directory/
+  --from-file=KEY=directory/file
+# Consuming using "configMapKeyRef"
+
+# List all ENV:
+oc env dc/printenv --list
+```
+
+### k/ RBAC table
 
 | Name of the role | Permissions |
 |------------------|-------------|
@@ -528,3 +575,108 @@ oc create serviceaccount <account>
 |basic-user        |read account |
 |self-provisioner  |cluster role to create new project(s) |
 |admin             |anything     |
+
+### l/ Autoscale pods
+
+```bash
+oc autoscale dc/myapp --min 1 --max 5 --cpu-percent=80
+oc get hpa/frontend
+```
+
+### m/ Tag images
+
+```bash
+oc tag <ruby:latest> <ruby:2.0>
+# Options:
+#   --alias=true
+#   --scheduled=true
+#   --reference-policy=local
+```
+
+### n/ Docker import vs Docker load
+
+```none
+# Docker import
+  - Create an empty filesystem image and import the contents of the tarball into it.
+# Docker load
+  - Load an image from a file or STDIN. Restores both images & tags. Write image names or IDs imported into STDOUT.
+```
+
+### o/ OpenShift output vs export
+
+```none
+oc get <RES> -o yaml
+oc export <RES>
+# Export will show object definition without any runtime specifics
+```
+
+### p/ A/B routing
+
+```bash
+oc set route-backends <ROUTE> <svc1=weight>
+oc set route-backends cotd cotd1=50 cotd2=50
+```
+
+### q/ Link secret with service account
+
+`oc secret link <service-account> <secret-name>`
+
+### r/ Process template into a list of resources
+
+```bash
+oc process -f <TEMPLATE> | oc create -f -         # examines template, generates parameters. To override params, add -v
+```
+
+### s/ Examine pod contents
+
+```none
+/usr/local/s2i/run
+/var/run/secrets/kubernetes.io/serviceaccount
+/root/buildinfo
+```
+
+### t/ Delete environment variable
+
+`oc set env dc/d1 ENV1- ENV2- ENV3-`
+
+### u/ Using secrets with ENV & Volumes
+
+`oc env dc/printenv --from=secret/printsecret`
+
+`oc env dc/printenv --from=secret/printsecret --prefix=DB_`
+
+`oc set volume dc/printenv --add --overwrite --name=db-conf-volume --mount-path /debconf/ --secret-name=printenv-secret`
+
+### v/ Turn off automatic triggers
+
+`oc set triggers dc <NAME> --manual`
+
+### w/ Allow Jenkins to build & deploy the app
+
+```bash
+oc policy add-role-to-user edit system
+  serviceaccount:<PROJECT_NAME>:jenkins -n <NAMESPACE>
+```
+
+Because Jenkins is in a different project than the application
+
+Jenkins container has to be deployed first: Service Catalog > CI/CD > Jenkins (persistent)
+
+### x/ Generate values in templates
+
+```none
+parameters:
+  - name: PASSWORD
+    description: "Random password"
+    generate: expression
+    from: "[a-zA-Z0-9]{12}"
+```
+
+```bash
+# Create an application from template:
+oc new-app --template=ruby-hello --param=A=B
+```
+
+To make template available accross the cluster, cluster admin must add it to the `openshift` namespace
+
+List all parameters from mysql template: `oc process --parameters=true -n openshift mysql`
