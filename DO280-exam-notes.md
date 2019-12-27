@@ -1,5 +1,7 @@
 # Red Hat OpenShift Admin I (v3.9) DO280/EX280
 
+_Fri Dec 27 10:28:55 UTC 2019_
+
 ## 1. Installation - Ansible inventory file & vars
 
 ```ini
@@ -95,22 +97,19 @@ oc explain
 ### b/ Generate CSR (request)
 
 ```bash
-openssl req -new -key <hello.apps.lab.example.com.key> -out <hello.apps.lab.example.com.csr> \
-  -subj "/C=US/ST=NC/L=Raileigh/O=RedHat/OU=RH/CN=hello.apps.lab.example.com"
+openssl req -new -key <hello.apps.lab.example.com.key> -out <hello.apps.lab.example.com.csr> -subj "/C=US/ST=NC/L=Raileigh/O=RedHat/OU=RH/CN=hello.apps.lab.example.com"
 ```
 
 ### c/ Generate certificate
 
 ```bash
-openssl x509 -req -days 365 -in <hello.apps.lab.example.com.csr> -signkey <hello.apps.lab.example.com.key> \
-  -out <hello.apps.lab.example.com.crt>
+openssl x509 -req -days 365 -in <hello.apps.lab.example.com.csr> -signkey <hello.apps.lab.example.com.key> -out <hello.apps.lab.example.com.crt>
 ```
 
 ### d/ Create secure edge-terminated route
 
 ```bash
-oc create route edge --service=hello --hostname=hello.apps.lab.example.com --key=hello.apps.lab.example.com \
-  --cert=hello.apps.lab.example.com.crt
+oc create route edge --service=hello --hostname=hello.apps.lab.example.com --key=hello.apps.lab.example.com --cert=hello.apps.lab.example.com.crt
 oc types
 oc get routes
 oc get route/hello -o yaml
@@ -127,8 +126,7 @@ oc edit route hello-openshift
 ## 5. ImageStreams
 
 ```bash
-oc new-app --name=hello -i php:5.4 \              # -i = imagestream
-  http://services/lab/example.com/php-helloworld  # git repository
+oc new-app --name=hello -i php:5.4 http://services/lab/example.com/php-helloworld # -i = imagestream + git repository
 oc describe is php -n openshift
 oc get pods -o wide
 oc logs hello-1-build
@@ -150,16 +148,14 @@ oc get dc <hello> -o yaml
 sudo vi /etc/sysconfig/docker
 oc rollout latest hellp
 oc logs <hello-2-abcd>
-pc expose service --hostname=hello.apps.lab.example.com <node-hello>
+oc expose service --hostname=hello.apps.lab.example.com <node-hello>
 oc debug pod <PODNAME>
 ```
 
 ## 7. Secrets
 
 ```bash
-oc create secret generic <mysql> --from-literal='database-user'='mysql' \
-  --from-literal='database-password'='r3dh4t'
-  --from-literal='database-root-password'='redhat'
+oc create secret generic <mysql> --from-literal='database-user'='mysql' --from-literal='database-password'='r3dh4t' --from-literal='database-root-password'='redhat'
 oc get secret <mysql> -o yaml
 oc new-app --file=mysql.yml
 oc port-forward <pod> <local>:<on the pod>        # oc port-forward mysql-1-abcd 3306:3306
@@ -244,8 +240,7 @@ oc create -f <mysqldb-volume.yml>
 oc get pv
 oc status -v
 oc describe pod <mysqldb>
-oc set volume dc/<mysqldb> --add --overwrite --name=<mysqldb-volume-1> -t pvc --claim-name=<mysqldb-pvclaim> \
-  --claim-size=<3Gi> --claim-mode=<'ReadWriteMany'>
+oc set volume dc/<mysqldb> --add --overwrite --name=<mysqldb-volume-1> -t pvc --claim-name=<mysqldb-pvclaim> --claim-size=<3Gi> --claim-mode=<'ReadWriteMany'>
 oc get pvc
 ```
 
@@ -260,7 +255,7 @@ oc get pvc
     4. In the template, there is "volumes" object 'mysql-data' using "persistenVolumeClaim" with "claimName" of mysql-pvc
     - What happens is following:
       - 'mysql-pvc' is bound to volume 'review-pv'
-      - it has requested capacity of 1GiB, but allocated 3GiB
+      - it has requested capacity of 1GiB, but was allocated 3GiB
       - if the selector in PVC is not specified, it will automatically find the closest one
 ```
 
@@ -279,7 +274,7 @@ oc label node <node2.lab.example.com> region=<apps> --overwrite
 oc get dc/hello -o yaml > <hello.yml>
 ```
 
-`hello.yml`
+`cat hello.yml`
 
 ```yaml
 nodeSelector:
@@ -291,7 +286,7 @@ nodeSelector:
 
 ### a/ Disable scheduling on node2
 
-`oc adm manage-nmode --schedulable=false <node2.lab.example.com>`
+`oc adm manage-node --schedulable=false <node2.lab.example.com>`
 
 ### b/ Delete/drain all pods on node2
 
@@ -434,7 +429,7 @@ oc describe quota
 
 ```bash
 oc describe pod <hello-1-abcdef> | grep -A 2 Requests
-# When you scal up and get over the quota, resources will not be created
+# When you scale up and get over the quota, resources will not be created
 oc get resourcequota --list-all-quotas
 oc get events | grep -i error
 oc set resources dc hello --requests=memory=256Mi
@@ -653,14 +648,13 @@ oc process -f <TEMPLATE> | oc create -f -         # examines template, generates
 
 ### w/ Allow Jenkins to build & deploy the app
 
+Jenkins container has to be deployed first: Service Catalog > CI/CD > Jenkins (persistent)
+
 ```bash
-oc policy add-role-to-user edit system
-  serviceaccount:<PROJECT_NAME>:jenkins -n <NAMESPACE>
+oc policy add-role-to-user edit system serviceaccount:<PROJECT_NAME>:jenkins -n <NAMESPACE>
 ```
 
 Because Jenkins is in a different project than the application
-
-Jenkins container has to be deployed first: Service Catalog > CI/CD > Jenkins (persistent)
 
 ### x/ Generate values in templates
 
