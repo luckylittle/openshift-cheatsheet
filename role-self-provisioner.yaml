@@ -1,0 +1,21 @@
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: self-provisioner
+  selfLink: /apis/rbac.authorization.k8s.io/v1/clusterroles/self-provisioner
+  uid: a06f9f05-0a6e-11ea-9aa6-02f5b468b2b7
+  resourceVersion: '104'
+  creationTimestamp: '2019-11-19T01:48:04Z'
+  annotations:
+    authorization.openshift.io/system-only: 'true'
+    openshift.io/description: A user that can request projects.
+    rbac.authorization.kubernetes.io/autoupdate: 'true'
+rules:
+  - verbs:
+      - create
+    apiGroups:
+      - ''
+      - project.openshift.io
+    resources:
+      - projectrequests
+

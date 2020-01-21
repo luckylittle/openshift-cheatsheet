@@ -1,0 +1,25 @@
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: cluster-admin
+  selfLink: /apis/rbac.authorization.k8s.io/v1/clusterroles/cluster-admin
+  uid: a0674da9-0a6e-11ea-9aa6-02f5b468b2b7
+  resourceVersion: '199'
+  creationTimestamp: '2019-11-19T01:48:04Z'
+  labels:
+    kubernetes.io/bootstrapping: rbac-defaults
+  annotations:
+    authorization.openshift.io/system-only: 'true'
+    rbac.authorization.kubernetes.io/autoupdate: 'true'
+rules:
+  - verbs:
+      - '*'
+    apiGroups:
+      - '*'
+    resources:
+      - '*'
+  - verbs:
+      - '*'
+    nonResourceURLs:
+      - '*'
+

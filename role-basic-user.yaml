@@ -1,0 +1,73 @@
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: basic-user
+  selfLink: /apis/rbac.authorization.k8s.io/v1/clusterroles/basic-user
+  uid: a06eb4b6-0a6e-11ea-9aa6-02f5b468b2b7
+  resourceVersion: '100'
+  creationTimestamp: '2019-11-19T01:48:04Z'
+  annotations:
+    openshift.io/description: A user that can get basic information about projects.
+    rbac.authorization.kubernetes.io/autoupdate: 'true'
+rules:
+  - verbs:
+      - get
+    apiGroups:
+      - ''
+      - user.openshift.io
+    resources:
+      - users
+    resourceNames:
+      - '~'
+  - verbs:
+      - list
+    apiGroups:
+      - ''
+      - project.openshift.io
+    resources:
+      - projectrequests
+  - verbs:
+      - get
+      - list
+    apiGroups:
+      - ''
+      - authorization.openshift.io
+    resources:
+      - clusterroles
+  - verbs:
+      - get
+      - list
+      - watch
+    apiGroups:
+      - rbac.authorization.k8s.io
+    resources:
+      - clusterroles
+  - verbs:
+      - get
+      - list
+    apiGroups:
+      - storage.k8s.io
+    resources:
+      - storageclasses
+  - verbs:
+      - list
+      - watch
+    apiGroups:
+      - ''
+      - project.openshift.io
+    resources:
+      - projects
+  - verbs:
+      - create
+    apiGroups:
+      - ''
+      - authorization.openshift.io
+    resources:
+      - selfsubjectrulesreviews
+  - verbs:
+      - create
+    apiGroups:
+      - authorization.k8s.io
+    resources:
+      - selfsubjectaccessreviews
+
