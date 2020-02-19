@@ -30,6 +30,10 @@ OpenShift Client types:
 Notes from the OPEN (Red Hat Online Partner Enablement Network) training:
 - `red_hat_openshift_notes.txt`
 
+## Stargazers over time
+
+[![Stargazers over time](https://starchart.cc/luckylittle/openshift-cheatsheet.svg)](https://starchart.cc/luckylittle/openshift-cheatsheet)
+
 # Contributors
 
 Lucian Maly <<lucian@redhat.com>>
