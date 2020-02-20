@@ -6,13 +6,13 @@ Notes from the [book](https://assets.openshift.com/hubfs/pdfs/DevOps_with_OpenSh
 - `devops_with_openshift_book.md`
 
 Labs from the OpenTLC training:
-- `Labs_Module01.pdf`
-  `Labs_Module03.pdf`
-  `Labs_Module05fastrax.pdf`
-  `Labs_Module05.pdf`
-  `Labs_Module06fastrax.pdf`
-  `Labs_Module06.pdf`
-  `Labs_Module07.pdf`
+- `Labs_Module01.pdf`,
+  `Labs_Module03.pdf`,
+  `Labs_Module05fastrax.pdf`,
+  `Labs_Module05.pdf`,
+  `Labs_Module06fastrax.pdf`,
+  `Labs_Module06.pdf`,
+  `Labs_Module07.pdf`,
   `Labs_Module08.pdf`
 
 MiniShift CLI guide:
